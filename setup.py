@@ -1,0 +1,45 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="trading-journal",
+    version="1.0.0",
+    description="Binance Trading Journal — Auto trade record sync + dashboard",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    author="Bryan",
+    author_email="gn01968711@gmail.com",
+    url="https://github.com/iruka/trading-journal",
+    license="MIT",
+    packages=find_packages(),
+    python_requires=">=3.8",
+    install_requires=[
+        "python-binance>=1.0.20",
+        "psycopg2-binary>=2.9.9",
+        "python-dotenv>=1.0.1",
+        "requests>=2.32.3",
+        "fastapi>=0.115.0",
+        "uvicorn>=0.30.0",
+        "pandas>=2.1.4",
+        "plotly>=5.23.0",
+    ],
+    entry_points={
+        "console_scripts": [
+            "trading-journal-backfill=trading_journal.backfill_binance:main",
+            "trading-journal-sync=trading_journal.sync_binance:main",
+            "trading-journal-dashboard=trading_journal.dashboard:app",
+        ],
+    },
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Financial and Insurance Industry",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+    ],
+    keywords="trading journal binance crypto futures spot",
+)
