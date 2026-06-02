@@ -234,6 +234,7 @@ def position_detail(pid: int):
         "entry_quality": round(random.random(), 2),
         "opportunity_capture": round(random.random(), 2),
         "metrics_at": int(time.time() * 1000),
+        "close_price_usd": round(random.uniform(90000, 100000), 2) if market == "coinm" else None,
     }
 
     # 生成 fills 數據
@@ -264,7 +265,7 @@ def position_detail(pid: int):
 
 # ─── /api/positions/{id}/klines ──────────────────────────────────────────────────
 @app.get("/api/positions/{pid}/klines", dependencies=[Depends(auth)])
-def position_klines(pid: int, interval: str = None):
+def position_klines(pid: int, interval: str = Query("1h", pattern="^(15m|1h)$")):
     # MOCK 蠟燭圖數據
     import datetime
     import random
@@ -280,9 +281,14 @@ def position_klines(pid: int, interval: str = None):
     base_date = datetime.datetime(2026, 1, 1)
     open_ts = int((base_date + datetime.timedelta(days=(pid-1)//2)).timestamp() * 1000)
     close_ts = open_ts + random.randint(3600000, 432000000)
-    used_interval = interval or "1h"
 
-    # 生成蠟燭圖數據（每根蠟燭 1 小時）
+    # 根據 interval 設置蠟燭間隔
+    if interval == "15m":
+        candle_interval_ms = 15 * 60 * 1000  # 15 分鐘
+    else:  # 1h
+        candle_interval_ms = 60 * 60 * 1000  # 1 小時
+
+    # 生成蠟燭圖數據
     candles = []
     price = round(random.uniform(1000, 50000), 2)
     ts = open_ts
@@ -301,7 +307,7 @@ def position_klines(pid: int, interval: str = None):
             "v": v,
         })
         price = c
-        ts += 3600000  # 1 小時
+        ts += candle_interval_ms  # 使用動態間隔
 
     avg_entry = round(random.uniform(1000, 50000), 2)
     avg_exit = round(random.uniform(1000, 50000), 2)

@@ -28,6 +28,7 @@ POSITION_COLUMNS = [
     "qty", "avg_entry", "avg_exit",
     "realized_pnl", "pnl_asset", "is_estimated",
     "fees", "fee_asset", "funding", "num_fills",
+    "close_price_usd",
 ]
 
 DDL = """
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS positions (
   fee_asset            TEXT,
   funding              DOUBLE PRECISION,         -- 持仓窗口内 FUNDING_FEE 求和
   num_fills            INT,
+  close_price_usd      DOUBLE PRECISION,         -- Coin-M 平仓时的 USD 价格
   -- 懒计算（详情页首次打开时按 K 线回填）
   mae                  DOUBLE PRECISION,
   mfe                  DOUBLE PRECISION,

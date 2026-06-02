@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
@@ -13,8 +14,9 @@ export function PositionDetail() {
   const { id } = useParams();
   const pid = Number(id);
   const nav = useNavigate();
+  const [interval, setInterval] = useState<"15m" | "1h">("1h");
   const { data: p, error, loading } = useApi(() => api.position(pid), [pid]);
-  const klines = useApi(() => api.klines(pid), [pid]);
+  const klines = useApi(() => api.klines(pid, interval), [pid, interval]);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBlock error={error} />;
@@ -29,6 +31,21 @@ export function PositionDetail() {
         <span className="material-symbols-outlined">arrow_back</span>
         <span className="text-data-mono">Back</span>
       </button>
+
+      {/* Interval Selector */}
+      <div className="flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1">
+        {(["15m", "1h"] as const).map((i) => (
+          <button
+            key={i}
+            onClick={() => setInterval(i)}
+            className={`rounded px-3 py-1 text-data-mono text-xs transition-colors ${
+              interval === i ? "bg-primary/20 text-primary" : "text-on-surface-variant"
+            }`}
+          >
+            {i}
+          </button>
+        ))}
+      </div>
 
       {/* Summary Card */}
       <GlassCard className="flex flex-col gap-md md:flex-row md:justify-between">
@@ -50,6 +67,9 @@ export function PositionDetail() {
           <Row label="Hold Time" value={fmtDuration(p.hold_ms)} />
           <Row label="Fees" value={p.fees ? `${fmtNum(p.fees, 6)} ${p.fee_asset ?? ""}` : "—"} />
           <Row label="Total Funding" value={p.funding === null ? "N/A" : fmtNum(p.funding, 6)} />
+          {p.close_price_usd && (
+            <Row label="Close Price USD" value={`$${fmtNum(p.close_price_usd, 2)}`} />
+          )}
           <div className="flex items-center justify-between">
             <span className="font-sans text-headline-md font-bold">Realised PNL</span>
             <span className={`font-mono text-headline-md ${pnlClass(p.realized_pnl)}`}>
