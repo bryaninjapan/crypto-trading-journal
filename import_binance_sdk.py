@@ -275,9 +275,7 @@ def main():
 
     # USD-M 期货交易对（USDT 计价）
     usdm_symbols = [
-        'BTCUSDT', 'ETHUSDT', 'BNBUSDT',
-        'ADAUSDT', 'ADAUSD_230929',
-        'SANDUSD',
+        'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT',
     ]
 
     # Coin-M 期货交易对（_PERP 后缀，币本位）
