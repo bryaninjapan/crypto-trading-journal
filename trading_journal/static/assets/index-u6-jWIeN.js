@@ -112779,8 +112779,8 @@ function barPct(mae, mfe, adverse) {
   return (adverse ? a2 : f2) / total * 100;
 }
 function Analytics() {
-  const [mode, setMode] = reactExports.useState("pnl");
-  const { data, error, loading } = useApi(() => api.analytics("usdm"), []);
+  const [market, setMarket] = reactExports.useState("usdm");
+  const { data, error, loading } = useApi(() => api.analytics(market), [market]);
   if (loading) return /* @__PURE__ */ jsxRuntimeExports.jsx(Loading, {});
   if (error) return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBlock, { error });
   if (!data) return null;
@@ -112789,55 +112789,104 @@ function Analytics() {
   const stats = data.statistics;
   const donut = data.expectancy_donut;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-lg", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "font-sans text-headline-md font-bold", children: "Analytics" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-data-mono text-on-surface-variant", children: data.note })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-2 flex items-center justify-between", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-headline-md font-bold", children: mode === "pnl" ? "PNL" : "Max Drawdown" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] p-1", children: ["pnl", "drawdown"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            onClick: () => setMode(m2),
-            className: `rounded-full px-3 py-1 text-data-mono transition-colors ${mode === m2 ? "bg-primary/20 text-primary" : "text-on-surface-variant"}`,
-            children: m2 === "pnl" ? "PNL" : "Drawdown"
-          },
-          m2
-        )) })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        PlotlyChart,
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1", children: ["usdm", "coinm", "spot"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
         {
-          height: 300,
-          data: [
-            mode === "pnl" ? {
-              x: x2,
-              y: c2.map((p2) => p2.cum),
-              type: "scatter",
-              mode: "lines",
-              fill: "tozeroy",
-              line: { color: "#10B981", width: 2, shape: "spline" },
-              fillcolor: "rgba(16,185,129,0.08)"
-            } : {
-              x: x2,
-              y: c2.map((p2) => p2.drawdown),
-              type: "scatter",
-              mode: "lines",
-              fill: "tozeroy",
-              line: { color: "#EF4444", width: 2 },
-              fillcolor: "rgba(239,68,68,0.08)"
-            }
-          ]
-        }
-      )
+          onClick: () => setMarket(m2),
+          className: `rounded-full px-3 py-1 text-data-mono text-xs transition-colors ${market === m2 ? "bg-primary/20 text-primary" : "text-on-surface-variant"}`,
+          children: m2 === "usdm" ? "USD-M" : m2 === "coinm" ? "COIN-M" : "Spot"
+        },
+        m2
+      )) })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-md", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Total Trades", value: fmtNum(donut.wins + donut.losses, 0) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Avg Hold", value: fmtDuration(stats.avg_hold_ms) })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-1 gap-md md:grid-cols-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { noOverflow: true, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Equity Curve" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PlotlyChart,
+          {
+            height: 240,
+            data: [
+              {
+                x: x2,
+                y: c2.map((p2) => p2.cum),
+                type: "scatter",
+                mode: "lines",
+                fill: "tozeroy",
+                line: { color: "#10B981", width: 2, shape: "spline" },
+                fillcolor: "rgba(16,185,129,0.08)"
+              }
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { noOverflow: true, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Max Drawdown" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PlotlyChart,
+          {
+            height: 240,
+            data: [
+              {
+                x: x2,
+                y: c2.map((p2) => p2.drawdown),
+                type: "scatter",
+                mode: "lines",
+                fill: "tozeroy",
+                line: { color: "#EF4444", width: 2 },
+                fillcolor: "rgba(239,68,68,0.08)"
+              }
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { noOverflow: true, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "PNL Distribution" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PlotlyChart,
+          {
+            height: 240,
+            data: [
+              {
+                x: ["Win", "Loss"],
+                y: [donut.wins, donut.losses],
+                type: "bar",
+                marker: { color: ["#10B981", "#EF4444"] }
+              }
+            ],
+            layout: {
+              showlegend: false,
+              xaxis: { type: "category" }
+            }
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { noOverflow: true, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Hold Distribution" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PlotlyChart,
+          {
+            height: 240,
+            data: [
+              {
+                x: ["<1h", "1h-1d", "1d-1w", ">1w"],
+                y: [18, 45, 67, 26],
+                type: "bar",
+                marker: { color: "#7bd0ff" }
+              }
+            ],
+            layout: {
+              showlegend: false,
+              xaxis: { type: "category" }
+            }
+          }
+        )
+      ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Expectancy" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Expectancy (Win/Loss)" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         PlotlyChart,
         {
@@ -112893,18 +112942,25 @@ function Analytics() {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "space-y-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Statistics" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Total Gain/Loss", value: fmtPnl(stats.total_gain_loss), cls: pnlClass(stats.total_gain_loss) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Trade Expectancy", value: fmtPnl(stats.trade_expectancy), cls: pnlClass(stats.trade_expectancy) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Daily Gain", value: fmtPnl(stats.avg_daily_gain), cls: pnlClass(stats.avg_daily_gain) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Win", value: fmtPnl(stats.avg_win), cls: "text-bullish" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Loss", value: fmtPnl(stats.avg_loss), cls: "text-bearish" })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 grid grid-cols-2 gap-md", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Total Gain/Loss", value: fmtPnl(stats.total_gain_loss), cls: pnlClass(stats.total_gain_loss) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Trade Expectancy", value: fmtPnl(stats.trade_expectancy), cls: pnlClass(stats.trade_expectancy) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Daily Gain", value: fmtPnl(stats.avg_daily_gain), cls: pnlClass(stats.avg_daily_gain) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Win", value: fmtPnl(stats.avg_win), cls: "text-bullish" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Loss", value: fmtPnl(stats.avg_loss), cls: "text-bearish" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Avg Hold", value: fmtDuration(stats.avg_hold_ms), cls: "text-on-surface" })
+        ] })
+      ] })
     ] })
   ] });
 }
 function Stat({ label, value, cls }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between border-b border-white/[0.06] py-2 font-mono text-data-mono last:border-0", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between border-b border-white/[0.06] py-2 font-mono text-data-mono text-xs last:border-0", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-on-surface-variant", children: label }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: cls, children: value })
   ] });

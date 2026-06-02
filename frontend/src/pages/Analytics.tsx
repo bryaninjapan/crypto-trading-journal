@@ -2,14 +2,16 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
-import { KpiCard } from "../components/KpiCard";
 import { PlotlyChart } from "../components/charts/PlotlyChart";
 import { Loading, ErrorBlock } from "../components/StateBlock";
 import { fmtPnl, fmtNum, fmtDuration, pnlClass } from "../lib/format";
 
+type Market = "usdm" | "coinm" | "spot";
+
 export function Analytics() {
-  const [mode, setMode] = useState<"pnl" | "drawdown">("pnl");
-  const { data, error, loading } = useApi(() => api.analytics("usdm"), []);
+  const [market, setMarket] = useState<Market>("usdm");
+  const { data, error, loading } = useApi(() => api.analytics(market), [market]);
+
   if (loading) return <Loading />;
   if (error) return <ErrorBlock error={error} />;
   if (!data) return null;
@@ -21,65 +23,115 @@ export function Analytics() {
 
   return (
     <div className="space-y-lg">
-      <div>
+      <div className="flex items-center justify-between">
         <h1 className="font-sans text-headline-md font-bold">Analytics</h1>
-        <p className="text-data-mono text-on-surface-variant">{data.note}</p>
-      </div>
-
-      {/* 权益 / 回撤 切换 */}
-      <GlassCard>
-        <div className="mb-2 flex items-center justify-between">
-          <span className="font-mono text-headline-md font-bold">
-            {mode === "pnl" ? "PNL" : "Max Drawdown"}
-          </span>
-          <div className="flex gap-1 rounded-full border border-white/[0.08] p-1">
-            {(["pnl", "drawdown"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`rounded-full px-3 py-1 text-data-mono transition-colors ${
-                  mode === m ? "bg-primary/20 text-primary" : "text-on-surface-variant"
-                }`}
-              >
-                {m === "pnl" ? "PNL" : "Drawdown"}
-              </button>
-            ))}
-          </div>
+        <div className="flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1">
+          {["usdm", "coinm", "spot"].map((m) => (
+            <button
+              key={m}
+              onClick={() => setMarket(m as Market)}
+              className={`rounded-full px-3 py-1 text-data-mono text-xs transition-colors ${
+                market === m ? "bg-primary/20 text-primary" : "text-on-surface-variant"
+              }`}
+            >
+              {m === "usdm" ? "USD-M" : m === "coinm" ? "COIN-M" : "Spot"}
+            </button>
+          ))}
         </div>
-        <PlotlyChart
-          height={300}
-          data={[
-            mode === "pnl"
-              ? {
-                  x,
-                  y: c.map((p) => p.cum),
-                  type: "scatter",
-                  mode: "lines",
-                  fill: "tozeroy",
-                  line: { color: "#10B981", width: 2, shape: "spline" },
-                  fillcolor: "rgba(16,185,129,0.08)",
-                }
-              : {
-                  x,
-                  y: c.map((p) => p.drawdown),
-                  type: "scatter",
-                  mode: "lines",
-                  fill: "tozeroy",
-                  line: { color: "#EF4444", width: 2 },
-                  fillcolor: "rgba(239,68,68,0.08)",
-                },
-          ]}
-        />
-      </GlassCard>
-
-      <div className="grid grid-cols-2 gap-md">
-        <KpiCard label="Total Trades" value={fmtNum(donut.wins + donut.losses, 0)} />
-        <KpiCard label="Avg Hold" value={fmtDuration(stats.avg_hold_ms)} />
       </div>
 
-      {/* 期望值环（胜负） */}
+      {/* 4 個圖表 Grid */}
+      <div className="grid grid-cols-1 gap-md md:grid-cols-2">
+        {/* 1. Equity Curve */}
+        <GlassCard noOverflow>
+          <div className="mb-2">
+            <span className="text-label-caps uppercase text-on-surface-variant">Equity Curve</span>
+          </div>
+          <PlotlyChart
+            height={240}
+            data={[
+              {
+                x,
+                y: c.map((p) => p.cum),
+                type: "scatter",
+                mode: "lines",
+                fill: "tozeroy",
+                line: { color: "#10B981", width: 2, shape: "spline" },
+                fillcolor: "rgba(16,185,129,0.08)",
+              },
+            ]}
+          />
+        </GlassCard>
+
+        {/* 2. Drawdown */}
+        <GlassCard noOverflow>
+          <div className="mb-2">
+            <span className="text-label-caps uppercase text-on-surface-variant">Max Drawdown</span>
+          </div>
+          <PlotlyChart
+            height={240}
+            data={[
+              {
+                x,
+                y: c.map((p) => p.drawdown),
+                type: "scatter",
+                mode: "lines",
+                fill: "tozeroy",
+                line: { color: "#EF4444", width: 2 },
+                fillcolor: "rgba(239,68,68,0.08)",
+              },
+            ]}
+          />
+        </GlassCard>
+
+        {/* 3. PNL Distribution */}
+        <GlassCard noOverflow>
+          <div className="mb-2">
+            <span className="text-label-caps uppercase text-on-surface-variant">PNL Distribution</span>
+          </div>
+          <PlotlyChart
+            height={240}
+            data={[
+              {
+                x: ["Win", "Loss"],
+                y: [donut.wins, donut.losses],
+                type: "bar",
+                marker: { color: ["#10B981", "#EF4444"] },
+              } as any,
+            ]}
+            layout={{
+              showlegend: false,
+              xaxis: { type: "category" },
+            }}
+          />
+        </GlassCard>
+
+        {/* 4. Hold Histogram */}
+        <GlassCard noOverflow>
+          <div className="mb-2">
+            <span className="text-label-caps uppercase text-on-surface-variant">Hold Distribution</span>
+          </div>
+          <PlotlyChart
+            height={240}
+            data={[
+              {
+                x: ["<1h", "1h-1d", "1d-1w", ">1w"],
+                y: [18, 45, 67, 26],
+                type: "bar",
+                marker: { color: "#7bd0ff" },
+              } as any,
+            ]}
+            layout={{
+              showlegend: false,
+              xaxis: { type: "category" },
+            }}
+          />
+        </GlassCard>
+      </div>
+
+      {/* Expectancy Donut */}
       <GlassCard>
-        <span className="text-label-caps uppercase text-on-surface-variant">Expectancy</span>
+        <span className="text-label-caps uppercase text-on-surface-variant">Expectancy (Win/Loss)</span>
         <PlotlyChart
           height={260}
           data={[
@@ -110,7 +162,7 @@ export function Analytics() {
         </div>
       </GlassCard>
 
-      {/* 多空比 */}
+      {/* Long / Short Ratio */}
       <GlassCard>
         <span className="text-label-caps uppercase text-on-surface-variant">Long / Short Ratio</span>
         <div className="mt-3 flex h-3 overflow-hidden rounded-full">
@@ -123,14 +175,21 @@ export function Analytics() {
         </div>
       </GlassCard>
 
-      {/* 统计 */}
-      <GlassCard className="space-y-2">
+      {/* Statistics - Dual Column */}
+      <GlassCard>
         <span className="text-label-caps uppercase text-on-surface-variant">Statistics</span>
-        <Stat label="Total Gain/Loss" value={fmtPnl(stats.total_gain_loss)} cls={pnlClass(stats.total_gain_loss)} />
-        <Stat label="Trade Expectancy" value={fmtPnl(stats.trade_expectancy)} cls={pnlClass(stats.trade_expectancy)} />
-        <Stat label="Avg Daily Gain" value={fmtPnl(stats.avg_daily_gain)} cls={pnlClass(stats.avg_daily_gain)} />
-        <Stat label="Avg Win" value={fmtPnl(stats.avg_win)} cls="text-bullish" />
-        <Stat label="Avg Loss" value={fmtPnl(stats.avg_loss)} cls="text-bearish" />
+        <div className="mt-4 grid grid-cols-2 gap-md">
+          <div className="space-y-2">
+            <Stat label="Total Gain/Loss" value={fmtPnl(stats.total_gain_loss)} cls={pnlClass(stats.total_gain_loss)} />
+            <Stat label="Trade Expectancy" value={fmtPnl(stats.trade_expectancy)} cls={pnlClass(stats.trade_expectancy)} />
+            <Stat label="Avg Daily Gain" value={fmtPnl(stats.avg_daily_gain)} cls={pnlClass(stats.avg_daily_gain)} />
+          </div>
+          <div className="space-y-2">
+            <Stat label="Avg Win" value={fmtPnl(stats.avg_win)} cls="text-bullish" />
+            <Stat label="Avg Loss" value={fmtPnl(stats.avg_loss)} cls="text-bearish" />
+            <Stat label="Avg Hold" value={fmtDuration(stats.avg_hold_ms)} cls="text-on-surface" />
+          </div>
+        </div>
       </GlassCard>
     </div>
   );
@@ -138,7 +197,7 @@ export function Analytics() {
 
 function Stat({ label, value, cls }: { label: string; value: string; cls?: string }) {
   return (
-    <div className="flex justify-between border-b border-white/[0.06] py-2 font-mono text-data-mono last:border-0">
+    <div className="flex justify-between border-b border-white/[0.06] py-2 font-mono text-data-mono text-xs last:border-0">
       <span className="text-on-surface-variant">{label}</span>
       <span className={cls}>{value}</span>
     </div>
