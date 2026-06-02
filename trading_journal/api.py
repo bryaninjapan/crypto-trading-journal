@@ -242,41 +242,130 @@ def position_klines(pid: int, interval: str = None):
 # ─── /api/analytics ──────────────────────────────────────────────────────────────
 @app.get("/api/analytics", dependencies=[Depends(auth)])
 def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
-    # MOCK 數據用於前端驗證
+    # MOCK 數據用於前端驗證 - CMM Analytics 風格
     import datetime
     import random
     random.seed(42)  # 固定種子
     base_date = datetime.datetime(2026, 1, 1)
-    equity = []
-    cum_pnl = 1500.0
-    peak = 1500.0
-    trend = 35.0  # 平緩上升趨勢
-    for i in range(60):
-        # 趨勢 + 隨機波動
-        daily_pnl = trend + random.uniform(-80, 100)
-        cum_pnl += daily_pnl
-        peak = max(peak, cum_pnl)
-        equity.append({
-            "t": int((base_date + datetime.timedelta(days=i)).timestamp() * 1000),
-            "cum": round(cum_pnl, 2),
-            "drawdown": round(cum_pnl - peak, 2)
-        })
+
+    # 生成交易數據
+    symbols_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
+    directions = ["Long", "Short"]
+
+    total_trades = 0
+    total_pnl = 0.0
+    total_hold_ms = 0
+    wins = 0
+    losses = 0
+    long_trades = []
+    short_trades = []
+    daily_pnls = {}
+
+    for i in range(156):
+        sym_idx = i % len(symbols_list)
+        direction = directions[i % 2]
+        open_ts = int((base_date + datetime.timedelta(days=i//2)).timestamp() * 1000)
+        close_ts = open_ts + random.randint(3600000, 432000000)  # 1h to 5d
+        pnl = random.uniform(-500, 800)
+        hold_ms = close_ts - open_ts
+
+        # 按市場篩選
+        if market == "usdm" and sym_idx > 2:
+            continue
+        elif market == "coinm" and sym_idx != 3:
+            continue
+        elif market == "spot" and sym_idx != 4:
+            continue
+
+        total_trades += 1
+        total_pnl += pnl
+        total_hold_ms += hold_ms
+        if pnl > 0:
+            wins += 1
+        else:
+            losses += 1
+
+        # 按天聚合 PNL
+        day = datetime.datetime.fromtimestamp(open_ts / 1000).date()
+        daily_pnls[day] = daily_pnls.get(day, 0.0) + pnl
+
+        trade = {
+            "direction": direction,
+            "pnl": pnl,
+            "hold_ms": hold_ms,
+        }
+
+        if direction == "Long":
+            long_trades.append(trade)
+        else:
+            short_trades.append(trade)
+
+    # 計算統計值
+    avg_hold_ms = total_hold_ms // total_trades if total_trades > 0 else 0
+    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
+
+    long_wins = sum(1 for t in long_trades if t["pnl"] > 0)
+    long_losses = sum(1 for t in long_trades if t["pnl"] <= 0)
+    short_wins = sum(1 for t in short_trades if t["pnl"] > 0)
+    short_losses = sum(1 for t in short_trades if t["pnl"] <= 0)
+
+    long_pnl = sum(t["pnl"] for t in long_trades)
+    short_pnl = sum(t["pnl"] for t in short_trades)
+
+    long_avg_hold = sum(t["hold_ms"] for t in long_trades) // len(long_trades) if long_trades else 0
+    short_avg_hold = sum(t["hold_ms"] for t in short_trades) // len(short_trades) if short_trades else 0
+
+    long_wins_pnl = sum(t["pnl"] for t in long_trades if t["pnl"] > 0) or 1
+    long_losses_pnl = sum(t["pnl"] for t in long_trades if t["pnl"] <= 0) or -1
+    short_wins_pnl = sum(t["pnl"] for t in short_trades if t["pnl"] > 0) or 1
+    short_losses_pnl = sum(t["pnl"] for t in short_trades if t["pnl"] <= 0) or -1
+
+    # 日數
+    num_days = len(daily_pnls) or 1
 
     return {
         "market": market,
-        "equity_curve": equity,
-        "expectancy_donut": {"wins": 98, "losses": 58, "win_rate": 62.8},
-        "long_short": {
-            "longs": 89, "shorts": 67,
-            "long_pct": 57.05,
+        "kpi": {
+            "total_trades": total_trades,
+            "avg_hold_ms": avg_hold_ms,
+            "win_rate": round(win_rate, 2),
+            "longs": len(long_trades),
+            "shorts": len(short_trades),
+            "long_pct": round(len(long_trades) / total_trades * 100, 2) if total_trades > 0 else 0,
         },
         "statistics": {
-            "total_gain_loss": 4500.50,
-            "trade_expectancy": 28.64,
-            "avg_daily_gain": 75.01,
-            "avg_hold_ms": 86400000,
-            "avg_win": 125.50,
-            "avg_loss": -95.25,
+            "total_gain_loss": round(total_pnl, 2),
+            "trade_expectancy": round(total_pnl / total_trades if total_trades > 0 else 0, 2),
+            "avg_daily_gain": round(total_pnl / num_days, 2),
+            "avg_daily_volume": round(total_pnl * 2.5, 2),  # mock: ~volume multiplier
+            "largest_gain": round(max((t["pnl"] for t in long_trades + short_trades if t["pnl"] > 0), default=0), 2),
+            "total_trades_volume": round(total_pnl * 30, 2),
+            "avg_trades_per_day": round(total_trades / num_days, 2),
+            "avg_trade_win": round(long_wins_pnl / long_wins if long_wins > 0 else 0, 2),
+            "avg_trade_loss": round(long_losses_pnl / long_losses if long_losses > 0 else 0, 2),
+            "max_consecutive_win": 9,  # mock
+            "max_consecutive_loss": 14,  # mock
+            "largest_losses": round(min((t["pnl"] for t in long_trades + short_trades if t["pnl"] < 0), default=0), 2),
+        },
+        "longs": {
+            "count": len(long_trades),
+            "win_ratio": round(long_wins / len(long_trades) * 100 if long_trades else 0, 2),
+            "wins": long_wins,
+            "losses": long_losses,
+            "avg_duration_ms": long_avg_hold,
+            "total_realized_pnl": round(long_pnl, 2),
+            "avg_win": round(long_wins_pnl / long_wins if long_wins > 0 else 0, 2),
+            "avg_loss": round(long_losses_pnl / long_losses if long_losses > 0 else 0, 2),
+        },
+        "shorts": {
+            "count": len(short_trades),
+            "win_ratio": round(short_wins / len(short_trades) * 100 if short_trades else 0, 2),
+            "wins": short_wins,
+            "losses": short_losses,
+            "avg_duration_ms": short_avg_hold,
+            "total_realized_pnl": round(short_pnl, 2),
+            "avg_win": round(short_wins_pnl / short_wins if short_wins > 0 else 0, 2),
+            "avg_loss": round(short_losses_pnl / short_losses if short_losses > 0 else 0, 2),
         },
         "pnl_asset": "USDT" if market != "coinm" else "coin",
         "note": "MOCK 數據用於前端驗證",
