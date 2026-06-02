@@ -265,22 +265,55 @@ def position_detail(pid: int):
 # ─── /api/positions/{id}/klines ──────────────────────────────────────────────────
 @app.get("/api/positions/{pid}/klines", dependencies=[Depends(auth)])
 def position_klines(pid: int, interval: str = None):
-    p = one("SELECT * FROM positions WHERE id=%s AND exchange=%s", (pid, EXCHANGE))
-    if not p:
-        raise HTTPException(404, "position not found")
-    start = p["open_time"]
-    end = p["close_time"] or int(time.time() * 1000)
-    try:
-        candles, used = K.fetch_klines(p["market"], p["symbol"], start, end, interval)
-    except Exception as e:
-        raise HTTPException(502, f"klines fetch failed: {e}")
+    # MOCK 蠟燭圖數據
+    import datetime
+    import random
+    random.seed(42 + pid)
+
+    symbols_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
+    markets_list = ["usdm", "usdm", "usdm", "coinm", "spot"]
+
+    sym_idx = (pid - 1) % len(symbols_list)
+    market = markets_list[sym_idx]
+    symbol = symbols_list[sym_idx]
+
+    base_date = datetime.datetime(2026, 1, 1)
+    open_ts = int((base_date + datetime.timedelta(days=(pid-1)//2)).timestamp() * 1000)
+    close_ts = open_ts + random.randint(3600000, 432000000)
+    used_interval = interval or "1h"
+
+    # 生成蠟燭圖數據（每根蠟燭 1 小時）
+    candles = []
+    price = round(random.uniform(1000, 50000), 2)
+    ts = open_ts
+    while ts <= close_ts:
+        o = price
+        c = price + round(random.uniform(-100, 100), 2)
+        h = max(o, c) + abs(round(random.uniform(0, 200), 2))
+        l = min(o, c) - abs(round(random.uniform(0, 200), 2))
+        v = round(random.uniform(0.1, 10), 2)
+        candles.append({
+            "t": ts,
+            "o": round(o, 2),
+            "h": round(h, 2),
+            "l": round(l, 2),
+            "c": round(c, 2),
+            "v": v,
+        })
+        price = c
+        ts += 3600000  # 1 小時
+
+    avg_entry = round(random.uniform(1000, 50000), 2)
+    avg_exit = round(random.uniform(1000, 50000), 2)
+
     return {
-        "symbol": p["symbol"], "market": p["market"], "interval": used,
+        "symbol": symbol,
+        "market": market,
+        "interval": used_interval,
         "candles": candles,
         "markers": {
-            "entry": {"t": p["open_time"], "price": p["avg_entry"]},
-            "exit": {"t": p["close_time"], "price": p["avg_exit"]}
-                    if p["close_time"] else None,
+            "entry": {"t": open_ts, "price": avg_entry},
+            "exit": {"t": close_ts, "price": avg_exit},
         },
     }
 

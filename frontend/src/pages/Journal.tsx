@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
@@ -11,6 +12,7 @@ import { fmtPnl, fmtNum, fmtDuration, pnlClass } from "../lib/format";
 const MARKETS = ["", "usdm", "coinm", "spot"];
 
 export function Journal() {
+  const nav = useNavigate();
   const [market, setMarket] = useState("");
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
@@ -52,7 +54,12 @@ export function Journal() {
         ) : (
           <div className="grid grid-cols-1 gap-md md:grid-cols-2">
             {symbols.data.symbols.map((s) => (
-              <GlassCard key={`${s.market}-${s.symbol}`} hover className="!p-md">
+              <GlassCard
+                key={`${s.market}-${s.symbol}`}
+                hover
+                className="!p-md cursor-pointer"
+                onClick={() => nav(`/journal?symbol=${s.symbol}`)}
+              >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="font-sans text-body-bold font-semibold">{s.symbol}</span>

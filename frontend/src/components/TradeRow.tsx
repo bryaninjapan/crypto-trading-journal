@@ -1,10 +1,15 @@
+import { useNavigate } from "react-router-dom";
 import { Position } from "../api/types";
 import { DirectionBadge } from "./Badge";
 import { fmtNum, fmtPnl, fmtTime, fmtDuration, pnlClass } from "../lib/format";
 
 export function TradeRow({ position, rowNum }: { position: Position; rowNum: number }) {
+  const nav = useNavigate();
   return (
-    <tr className="border-b border-white/[0.06] hover:bg-surface-container/50">
+    <tr
+      onClick={() => nav(`/positions/${position.id}`)}
+      className="cursor-pointer border-b border-white/[0.06] hover:bg-surface-container/50"
+    >
       {/* Row number */}
       <td className="px-lg py-2 text-data-mono text-xs text-on-surface-variant">#{rowNum}</td>
 
