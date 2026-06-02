@@ -263,25 +263,21 @@ def main():
         print(f"[✗] 初始化失败: {e}")
         return
 
-    # Spot 交易对
-    spot_symbols = [
-        'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT', 'XRPUSDT',
-        '0GUSDT', '1000SHIBUSDT', '1INCHUSDT', 'AEVOUSDT', 'AIOTUSDT', 'APEUSDT',
-        'APRUSDT', 'ARCUSDT', 'ASTERUSDT', 'ATOMUSDT', 'AUCTIONUSDT', 'AVNTUSDT',
-        'AXSUSDT', 'BDXNUSDT', 'BEAMXUSDT', 'BIDUSDT', 'BNXUSDT', 'CRVUSDT',
-        'DASHUSDT', 'DOGEUSDT', 'DOTUSDT', 'GMTUSDT', 'HUSDT', 'ICPUSDT',
-        'JELLYJELLYUSDT', 'JTOUSDT', 'JUPUSDT', 'KASUSDT', 'KNCUSDT', 'KSMUSDT',
-        'LABUSDT', 'LINKUSDT', 'LTCUSDT', 'MANTAUSDT', 'METISUSDT', 'MKRUSDT',
-        'MUSDT', 'MYXUSDT', 'NFPUSDT', 'NXPCUSDT', 'OCEANUSDT', 'OPUSDT',
-        'ORDIUSDT', 'PIPPINUSDT', 'SAGAUSDT', 'SRMUSDT', 'TIAUSDT',
-        'UNFIUSDT', 'WLDUSDT', 'XMRUSDT', 'ZENUSDT', 'ZEREBROUSDT',
+    # Spot 交易对（>0.1 USD）
+    spot_symbols = ['BTCUSDT', 'ADAUSDT']
+
+    # USD-M 期货交易对（USDT 计价）
+    usdm_symbols = [
+        'BTCUSDT', 'ETHUSDT', 'BNBUSDT',
+        'ADAUSDT', 'ADAUSD_230929',
+        'SANDUSD',
     ]
 
-    # USD-M 期货交易对（用户主要交易对）
-    usdm_symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT', 'XRPUSDT']
-
-    # Coin-M 期货交易对
-    coinm_symbols = ['ADAUSDT']  # 需要根据实际用户交易对调整
+    # Coin-M 期货交易对（_PERP 后缀，币本位）
+    coinm_symbols = [
+        'BTCUSD_PERP', 'ETHUSD_PERP', 'BNBUSD_PERP',
+        'ADAUSD_PERP', 'SANDUSD_PERP',
+    ]
 
     total_trades = 0
 
