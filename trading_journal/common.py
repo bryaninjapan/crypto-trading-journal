@@ -16,6 +16,7 @@ import os
 import time
 import requests
 import sqlite3
+import psycopg2
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
