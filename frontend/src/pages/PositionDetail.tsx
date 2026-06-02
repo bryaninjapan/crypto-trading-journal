@@ -79,66 +79,61 @@ export function PositionDetail() {
         </div>
       </GlassCard>
 
-      {/* 2-Column Layout: Fills (left) + Metrics (right) */}
+      {/* Fills Table (Full Width) */}
+      <GlassCard className="!p-0 overflow-hidden">
+        <div className="px-lg py-md">
+          <span className="text-label-caps uppercase text-on-surface-variant">Trade Fills</span>
+        </div>
+        <div className="border-t border-white/[0.06] px-lg py-md">
+          <FillsTable fills={p.fills || []} pnl_asset={p.pnl_asset} />
+        </div>
+      </GlassCard>
+
+      {/* Metrics: 3-Column Grid */}
       <div className="grid grid-cols-1 gap-lg md:grid-cols-3">
-        {/* Left: Fills Table (2 cols width) */}
-        <div className="md:col-span-2">
-          <GlassCard className="!p-0 overflow-hidden">
-            <div className="px-lg py-md">
-              <span className="text-label-caps uppercase text-on-surface-variant">Trade Fills</span>
-            </div>
-            <div className="border-t border-white/[0.06] px-lg py-md">
-              <FillsTable fills={p.fills || []} pnl_asset={p.pnl_asset} />
+        {/* MAE / MFE */}
+        {(p.mae !== null || p.mfe !== null) && (
+          <GlassCard className="space-y-2">
+            <div className="text-label-caps uppercase text-on-surface-variant">MAE / MFE</div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-data-mono text-bearish text-xs">{fmtPct(p.mae)}</span>
+              <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
+                <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
+                <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
+              </div>
+              <span className="font-mono text-data-mono text-bullish text-xs">{fmtPct(p.mfe)}</span>
             </div>
           </GlassCard>
-        </div>
+        )}
 
-        {/* Right: Metrics (1 col width) */}
-        <div className="space-y-md">
-          {/* MAE / MFE */}
-          {(p.mae !== null || p.mfe !== null) && (
-            <GlassCard className="space-y-2">
-              <div className="text-label-caps uppercase text-on-surface-variant">MAE / MFE</div>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-data-mono text-bearish text-xs">{fmtPct(p.mae)}</span>
-                <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
-                  <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
-                  <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
-                </div>
-                <span className="font-mono text-data-mono text-bullish text-xs">{fmtPct(p.mfe)}</span>
-              </div>
-            </GlassCard>
-          )}
+        {/* Entry Quality Gauge */}
+        <Gauge label="Entry Quality" value={p.entry_quality} />
 
-          {/* Entry Quality Gauge */}
-          <Gauge label="Entry Quality" value={p.entry_quality} />
-
-          {/* Opportunity Capture Gauge */}
-          <Gauge label="Opportunity Capture" value={p.opportunity_capture} />
-
-          {p.metrics_error && (
-            <div className="text-data-mono text-bearish text-xs">
-              指标计算失败：{p.metrics_error}
-            </div>
-          )}
-        </div>
+        {/* Opportunity Capture Gauge */}
+        <Gauge label="Opportunity Capture" value={p.opportunity_capture} />
       </div>
 
-      {/* Candlestick Chart (Full Width) */}
-      <GlassCard className="!p-sm md:!p-md">
-        {klines.loading ? (
-          <Loading />
-        ) : klines.error ? (
-          <ErrorBlock error={klines.error} />
-        ) : klines.data ? (
-          <>
-            <div className="mb-2 flex justify-between px-2 text-data-mono text-on-surface-variant">
-              <span>{klines.data.symbol}</span>
-              <span>{klines.data.interval}</span>
-            </div>
+      {p.metrics_error && (
+        <div className="text-data-mono text-bearish text-xs px-lg">
+          指标计算失败：{p.metrics_error}
+        </div>
+      )}
+
+      {/* Candlestick Chart */}
+      <GlassCard className="!p-0 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-lg py-md">
+          <span className="text-label-caps uppercase text-on-surface-variant">{klines.data?.symbol || "Chart"}</span>
+          <span className="text-label-caps uppercase text-on-surface-variant">{klines.data?.interval || "—"}</span>
+        </div>
+        <div className="flex-grow p-md">
+          {klines.loading ? (
+            <Loading />
+          ) : klines.error ? (
+            <ErrorBlock error={klines.error} />
+          ) : klines.data ? (
             <CandleChart data={klines.data} />
-          </>
-        ) : null}
+          ) : null}
+        </div>
       </GlassCard>
     </div>
   );
