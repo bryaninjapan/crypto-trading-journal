@@ -44,6 +44,13 @@ class DataProcessor:
         print("[✓] 已清空旧数据")
 
     def insert_trade(self, trade_dict):
+        # COINM quote_qty 可能是 None，计算为 price × qty_base
+        quote_qty = trade_dict.get('quote_qty')
+        if quote_qty is None:
+            quote_qty = float(trade_dict.get('price', 0)) * float(trade_dict.get('qty_base', 0))
+        else:
+            quote_qty = float(quote_qty)
+
         self.trades_buffer.append((
             'binance',  # exchange
             trade_dict.get('market'),
@@ -53,7 +60,7 @@ class DataProcessor:
             trade_dict.get('side'),
             float(trade_dict.get('price', 0)),
             float(trade_dict.get('qty_base', 0)),
-            float(trade_dict.get('quote_qty', 0)),
+            quote_qty,
             float(trade_dict.get('realized_pnl', 0)),
             trade_dict.get('margin_asset'),
             trade_dict.get('position_side'),
