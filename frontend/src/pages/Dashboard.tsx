@@ -24,7 +24,7 @@ export function Dashboard() {
       <h1 className="font-sans text-headline-md font-bold">Dashboard</h1>
 
       {/* Consolidated PNL 大卡 */}
-      <GlassCard className="relative overflow-hidden">
+      <GlassCard noOverflow className="relative">
         <span className="text-label-caps uppercase text-on-surface-variant">
           Consolidated PNL (USD-M)
         </span>
