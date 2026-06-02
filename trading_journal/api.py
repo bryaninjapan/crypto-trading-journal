@@ -124,12 +124,11 @@ def list_positions(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    # 从真实数据库查询交易
-    trades = rows("SELECT * FROM trades ORDER BY trade_time ASC")
+    # 从真实数据库查询交易（现货：直接返回交易记录）
+    trades = rows("SELECT * FROM trades ORDER BY trade_time DESC")
 
     all_positions = []
     for idx, t in enumerate(trades):
-        # 将交易转换为 positions 格式
         pos = {
             "id": idx + 1,
             "market": t.get("market"),
@@ -137,21 +136,20 @@ def list_positions(
             "direction": "LONG" if t.get("side") == "BUY" else "SHORT",
             "open_trade_id": t.get("trade_id"),
             "open_time": int(t.get("trade_time", 0)),
-            "close_time": int(t.get("trade_time", 0)),  # Spot 无平仓时间，用成交时间
+            "close_time": int(t.get("trade_time", 0)),
             "hold_ms": 0,
             "qty": float(t.get("qty_base", 0)),
             "avg_entry": float(t.get("price", 0)),
             "avg_exit": float(t.get("price", 0)),
-            "realized_pnl": float(t.get("realized_pnl", 0)),
+            "realized_pnl": float(t.get("realized_pnl", 0)) if t.get("realized_pnl") else 0.0,
             "pnl_asset": "USDT",
             "is_estimated": False,
-            "fees": float(t.get("fee", 0)),
-            "fee_asset": t.get("fee_asset"),
+            "fees": float(t.get("fee", 0)) if t.get("fee") else 0.0,
+            "fee_asset": t.get("fee_asset") or "USDT",
             "funding": 0.0,
             "num_fills": 1,
         }
 
-        # 过滤
         if market and pos["market"] != market:
             continue
         if symbol and pos["symbol"] != symbol:
@@ -161,14 +159,9 @@ def list_positions(
 
         all_positions.append(pos)
 
-    # 排序
     reverse = order == "desc"
-    if sort == "trade_time":
-        all_positions.sort(key=lambda x: x["open_time"], reverse=reverse)
-    else:
-        all_positions.sort(key=lambda x: x.get(sort, 0), reverse=reverse)
+    all_positions.sort(key=lambda x: x["open_time"], reverse=reverse)
 
-    # 分页
     total = len(all_positions)
     data = all_positions[offset:offset + limit]
 
@@ -344,8 +337,8 @@ def position_mae_mfe_timeline(pid: int):
 # ─── /api/analytics ──────────────────────────────────────────────────────────────
 @app.get("/api/analytics", dependencies=[Depends(auth)])
 def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
-    # 从数据库查询真实交易数据
-    trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC", (market,))
+    # 从数据库查询真实交易数据（不按市场过滤，因为数据都在 spot）
+    trades = rows("SELECT * FROM trades ORDER BY trade_time ASC")
 
     total_trades = len(trades)
     total_pnl = sum([float(t.get("realized_pnl", 0)) for t in trades])
