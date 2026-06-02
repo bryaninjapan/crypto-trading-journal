@@ -315,7 +315,7 @@ def position_klines(pid: int, interval: str = Query("1h", pattern="^(15m|1h)$"))
     return {
         "symbol": symbol,
         "market": market,
-        "interval": used_interval,
+        "interval": interval,
         "candles": candles,
         "markers": {
             "entry": {"t": open_ts, "price": avg_entry},
