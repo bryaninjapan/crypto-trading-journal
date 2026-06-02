@@ -15,8 +15,13 @@ from dotenv import load_dotenv
 load_dotenv("/home/ubuntu/trading-journal/.env")
 
 import traceback
-import common as c
-import positions as pos
+
+try:                       # 包模式：python -m trading_journal.sync_binance
+    from . import common as c
+    from . import positions as pos
+except ImportError:        # 目录内脚本模式：python sync_binance.py
+    import common as c
+    import positions as pos
 
 # 合约 symbol 发现回看窗口：覆盖最近活动 + 给漏跑留余量
 FUTURES_DISCOVERY_LOOKBACK_MS = 30 * 24 * 3600 * 1000
