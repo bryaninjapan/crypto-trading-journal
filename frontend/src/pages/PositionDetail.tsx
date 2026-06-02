@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
@@ -6,8 +5,6 @@ import { GlassCard } from "../components/GlassCard";
 import { FillsTable } from "../components/FillsTable";
 import { DirectionBadge, MarketBadge } from "../components/Badge";
 import { Gauge } from "../components/Gauge";
-import { CandleChart } from "../components/charts/CandleChart";
-import { MaeMfeTimeline } from "../components/charts/MaeMfeTimeline";
 import { Loading, ErrorBlock } from "../components/StateBlock";
 import { fmtPnl, fmtNum, fmtDuration, fmtTime, pnlClass } from "../lib/format";
 
@@ -15,10 +12,7 @@ export function PositionDetail() {
   const { id } = useParams();
   const pid = Number(id);
   const nav = useNavigate();
-  const [interval, setInterval] = useState<"15m" | "1h">("1h");
   const { data: p, error, loading } = useApi(() => api.position(pid), [pid]);
-  const klines = useApi(() => api.klines(pid, interval), [pid, interval]);
-  const timeline = useApi(() => api.maeMfeTimeline(pid), [pid]);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBlock error={error} />;
@@ -34,20 +28,6 @@ export function PositionDetail() {
         <span className="text-data-mono">Back</span>
       </button>
 
-      {/* Interval Selector */}
-      <div className="flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1">
-        {(["15m", "1h"] as const).map((i) => (
-          <button
-            key={i}
-            onClick={() => setInterval(i)}
-            className={`rounded px-3 py-1 text-data-mono text-xs transition-colors ${
-              interval === i ? "bg-primary/20 text-primary" : "text-on-surface-variant"
-            }`}
-          >
-            {i}
-          </button>
-        ))}
-      </div>
 
       {/* Summary Card */}
       <GlassCard className="flex flex-col gap-md md:flex-row md:justify-between">
@@ -92,17 +72,6 @@ export function PositionDetail() {
       </GlassCard>
 
       {/* MAE/MFE Timeline */}
-      {timeline.data && (
-        <GlassCard className="!p-0 overflow-hidden">
-          <div className="border-b border-white/[0.06] px-lg py-md">
-            <span className="text-label-caps uppercase text-on-surface-variant">MAE / MFE Timeline</span>
-          </div>
-          <div className="p-md">
-            <MaeMfeTimeline data={timeline.data} />
-          </div>
-        </GlassCard>
-      )}
-
       {/* Metrics: 2-Column Grid */}
       <div className="grid grid-cols-1 gap-lg md:grid-cols-2">
         {/* Entry Quality Gauge */}
@@ -117,23 +86,6 @@ export function PositionDetail() {
           指标计算失败：{p.metrics_error}
         </div>
       )}
-
-      {/* Candlestick Chart */}
-      <GlassCard className="!p-0 overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between border-b border-white/[0.06] px-lg py-md">
-          <span className="text-label-caps uppercase text-on-surface-variant">{klines.data?.symbol || "Chart"}</span>
-          <span className="text-label-caps uppercase text-on-surface-variant">{klines.data?.interval || "—"}</span>
-        </div>
-        <div className="flex-grow p-md">
-          {klines.loading ? (
-            <Loading />
-          ) : klines.error ? (
-            <ErrorBlock error={klines.error} />
-          ) : klines.data ? (
-            <CandleChart data={klines.data} />
-          ) : null}
-        </div>
-      </GlassCard>
     </div>
   );
 }
