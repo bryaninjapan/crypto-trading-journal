@@ -160,13 +160,14 @@ def _finalize(market, symbol, direction, fills, net_reached_zero):
         if f.get("fee") is not None:
             fees += float(f["fee"])
             fee_asset = fee_asset or f.get("fee_asset")
-        # 仅在平仓时（net_reached_zero=True）累加 realized_pnl；未平仓持仓的为 0
-        if net_reached_zero and f.get("realized_pnl") is not None:
+        if f.get("realized_pnl") is not None:
             realized += float(f["realized_pnl"])
             has_realized = True
 
     open_t = int(fills[0]["trade_time"])
     close_t = int(fills[-1]["trade_time"]) if net_reached_zero else None
+    # 未平仓持仓的 realized_pnl 应为 0（仅平仓后计算）
+    final_pnl = realized if (has_realized and net_reached_zero) else (0.0 if has_realized else None)
     return {
         "exchange": EXCHANGE,
         "market": market,
@@ -181,7 +182,7 @@ def _finalize(market, symbol, direction, fills, net_reached_zero):
         "avg_entry": (entry_px / entry_qty) if entry_qty > EPS else None,
         "avg_exit": (exit_px / exit_qty) if exit_qty > EPS else None,
         # 合约用交易所 realizedPnl；现货（无 realizedPnl）后续由 _spot_fifo 覆盖
-        "realized_pnl": realized if has_realized else None,
+        "realized_pnl": final_pnl,
         "pnl_asset": _pnl_asset(market, fills[0]),
         "is_estimated": market == "spot",
         "fees": fees,
