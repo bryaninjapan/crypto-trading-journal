@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
+import { FillsTable } from "../components/FillsTable";
 import { DirectionBadge, MarketBadge } from "../components/Badge";
 import { Gauge } from "../components/Gauge";
 import { CandleChart } from "../components/charts/CandleChart";
@@ -20,7 +21,7 @@ export function PositionDetail() {
   if (!p) return null;
 
   return (
-    <div className="space-y-md">
+    <div className="space-y-lg">
       <button
         onClick={() => nav(-1)}
         className="flex items-center gap-1 text-on-surface-variant hover:text-primary"
@@ -29,7 +30,7 @@ export function PositionDetail() {
         <span className="text-data-mono">Back</span>
       </button>
 
-      {/* 概要卡 */}
+      {/* Summary Card */}
       <GlassCard className="flex flex-col gap-md md:flex-row md:justify-between">
         <div className="w-full space-y-2 md:w-1/2">
           <div className="flex items-center gap-2">
@@ -40,7 +41,7 @@ export function PositionDetail() {
           <Row label="Open" value={`${fmtNum(p.avg_entry, 4)} @ ${fmtTime(p.open_time)}`} />
           <Row
             label="Close"
-            value={p.close_time ? `${fmtNum(p.avg_exit, 4)} @ ${fmtTime(p.close_time)}` : "仍持仓"}
+            value={p.close_time ? `${fmtNum(p.avg_exit, 4)} @ ${fmtTime(p.close_time)}` : "Open"}
           />
           <Row label="Qty" value={fmtNum(p.qty, 6)} />
           <Row label="Fills" value={String(p.num_fills)} />
@@ -58,7 +59,52 @@ export function PositionDetail() {
         </div>
       </GlassCard>
 
-      {/* 蜡烛图 */}
+      {/* 2-Column Layout: Fills (left) + Metrics (right) */}
+      <div className="grid grid-cols-1 gap-lg md:grid-cols-3">
+        {/* Left: Fills Table (2 cols width) */}
+        <div className="md:col-span-2">
+          <GlassCard className="!p-0 overflow-hidden">
+            <div className="px-lg py-md">
+              <span className="text-label-caps uppercase text-on-surface-variant">Trade Fills</span>
+            </div>
+            <div className="border-t border-white/[0.06] px-lg py-md">
+              <FillsTable fills={p.fills || []} pnl_asset={p.pnl_asset} />
+            </div>
+          </GlassCard>
+        </div>
+
+        {/* Right: Metrics (1 col width) */}
+        <div className="space-y-md">
+          {/* MAE / MFE */}
+          {(p.mae !== null || p.mfe !== null) && (
+            <GlassCard className="space-y-2">
+              <div className="text-label-caps uppercase text-on-surface-variant">MAE / MFE</div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-data-mono text-bearish text-xs">{fmtPct(p.mae)}</span>
+                <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
+                  <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
+                  <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
+                </div>
+                <span className="font-mono text-data-mono text-bullish text-xs">{fmtPct(p.mfe)}</span>
+              </div>
+            </GlassCard>
+          )}
+
+          {/* Entry Quality Gauge */}
+          <Gauge label="Entry Quality" value={p.entry_quality} />
+
+          {/* Opportunity Capture Gauge */}
+          <Gauge label="Opportunity Capture" value={p.opportunity_capture} />
+
+          {p.metrics_error && (
+            <div className="text-data-mono text-bearish text-xs">
+              指标计算失败：{p.metrics_error}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Candlestick Chart (Full Width) */}
       <GlassCard className="!p-sm md:!p-md">
         {klines.loading ? (
           <Loading />
@@ -74,33 +120,6 @@ export function PositionDetail() {
           </>
         ) : null}
       </GlassCard>
-
-      {/* MAE / MFE */}
-      {(p.mae !== null || p.mfe !== null) && (
-        <GlassCard className="space-y-2">
-          <div className="flex justify-between text-data-mono text-on-surface-variant">
-            <span>MAE / MFE（相对入场均价）</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-data-mono text-bearish">{fmtPct(p.mae)}</span>
-            <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
-              <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
-              <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
-            </div>
-            <span className="font-mono text-data-mono text-bullish">{fmtPct(p.mfe)}</span>
-          </div>
-        </GlassCard>
-      )}
-
-      {/* 仪表盘 */}
-      <div className="grid grid-cols-1 gap-md md:grid-cols-2">
-        <Gauge label="Entry Quality" value={p.entry_quality} />
-        <Gauge label="Opportunity Capture" value={p.opportunity_capture} />
-      </div>
-
-      {p.metrics_error && (
-        <div className="text-data-mono text-bearish">指标计算失败：{p.metrics_error}</div>
-      )}
     </div>
   );
 }
