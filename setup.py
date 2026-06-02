@@ -26,7 +26,7 @@ setup(
         "console_scripts": [
             "trading-journal-backfill=trading_journal.backfill_binance:main",
             "trading-journal-sync=trading_journal.sync_binance:main",
-            "trading-journal-dashboard=trading_journal.dashboard:app",
+            "trading-journal-positions=trading_journal.positions:main",
         ],
     },
     classifiers=[

@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  /* 比 surface 更深的「深渊」底色，让玻璃卡浮起来 */
+  background-color: #070a13;
+  color: #e0e2ef;
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Glassmorphism（DESIGN.md：rgba 玻璃 + 24px 模糊 + ghost border）── */
+@layer components {
+  .glass-card {
+    @apply rounded-md border border-white/[0.08];
+    background-color: rgba(14, 22, 38, 0.7);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+  .glass-card-hover {
+    @apply transition-shadow duration-200;
+  }
+  .glass-card-hover:hover {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+  }
+  .pill {
+    @apply rounded-full px-3 py-1 text-label-caps uppercase;
+  }
+  .material-symbols-outlined {
+    font-family: "Material Symbols Outlined";
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+  }
+}
+
+/* PNL glow utilities */
+.glow-bullish {
+  text-shadow: 0 0 12px rgba(16, 185, 129, 0.45);
+}
+.glow-bearish {
+  text-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
+}

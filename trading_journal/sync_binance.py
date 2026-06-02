@@ -15,10 +15,18 @@ from dotenv import load_dotenv
 load_dotenv("/home/ubuntu/trading-journal/.env")
 
 import traceback
-import common as c
+
+try:                       # 包模式：python -m trading_journal.sync_binance
+    from . import common as c
+    from . import positions as pos
+except ImportError:        # 目录内脚本模式：python sync_binance.py
+    import common as c
+    import positions as pos
 
 # 合约 symbol 发现回看窗口：覆盖最近活动 + 给漏跑留余量
 FUTURES_DISCOVERY_LOOKBACK_MS = 30 * 24 * 3600 * 1000
+# 资金费增量回看窗口（给漏跑留余量；income 去重靠 tranId）
+FUNDING_LOOKBACK_MS = 30 * 24 * 3600 * 1000
 
 
 def known_symbols(conn, market):
@@ -64,9 +72,25 @@ def main():
     usdm = sync_market(conn, "usdm", client.futures_account_trades, c.normalize_usdm, usdm_syms)
     coinm = sync_market(conn, "coinm", client.futures_coin_account_trades, c.normalize_coinm, coinm_syms)
 
+    # 资金费增量（usdm + coinm）
+    fund_rows = (
+        [c.normalize_funding("usdm", r)
+         for r in c.fetch_funding(client.futures_income_history, FUNDING_LOOKBACK_MS)]
+        + [c.normalize_funding("coinm", r)
+           for r in c.fetch_funding(client.futures_coin_income_history, FUNDING_LOOKBACK_MS)]
+    )
+    funding = c.upsert_funding(conn, fund_rows)
+
+    # 账户余额快照
+    bal = c.snapshot_balances(client, conn)
+
+    # 重建持仓聚合（含新成交 + funding 窗口求和）
+    written, total = pos.rebuild(conn)
+
     conn.close()
     msg = (f"<b>Binance 每日同步完成</b>\n"
-           f"新增成交 — 现货 {spot} | USD-M {usdm} | COIN-M {coinm}")
+           f"新增成交 — 现货 {spot} | USD-M {usdm} | COIN-M {coinm}\n"
+           f"资金费 +{funding} | 余额快照 {bal} 项 | 持仓 {total}（更新 {written}）")
     print(msg)
     c.telegram_send(msg)
 

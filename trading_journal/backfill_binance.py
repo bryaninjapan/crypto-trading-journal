@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv("/home/ubuntu/trading-journal/.env")
 
 import common as c
+import positions as pos
 
 
 def backfill_market(client, conn, market, trade_fn, normalize, symbols, label):
@@ -62,8 +63,31 @@ def main():
                             c.normalize_coinm, coinm_syms, "COIN-M")
     conn.close()
 
+    # 资金费全量回填（usdm + coinm）
+    conn = c.get_conn()
+    print("\n=== 回填资金费 (FUNDING_FEE) ===")
+    fund_rows = (
+        [c.normalize_funding("usdm", r)
+         for r in c.fetch_funding(client.futures_income_history)]
+        + [c.normalize_funding("coinm", r)
+           for r in c.fetch_funding(client.futures_coin_income_history)]
+    )
+    funding = c.upsert_funding(conn, fund_rows)
+    print(f"资金费 完成：新增 {funding} 笔")
+
+    # 首次余额快照
+    bal = c.snapshot_balances(client, conn)
+    print(f"余额快照：{bal} 项")
+
+    # 建持仓聚合
+    print("\n=== 建持仓聚合 ===")
+    written, total = pos.rebuild(conn)
+    print(f"持仓 完成：聚合 {total} 个，写入 {written}")
+    conn.close()
+
     msg = (f"<b>Binance 历史回填完成</b>\n"
-           f"现货 {spot} | USD-M {usdm} | COIN-M {coinm} 笔")
+           f"现货 {spot} | USD-M {usdm} | COIN-M {coinm} 笔\n"
+           f"资金费 {funding} | 余额 {bal} 项 | 持仓 {total}")
     print("\n" + msg)
     c.telegram_send(msg)
 
