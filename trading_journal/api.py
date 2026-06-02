@@ -191,27 +191,73 @@ def list_positions(
 # ─── /api/positions/{id} ─────────────────────────────────────────────────────────
 @app.get("/api/positions/{pid}", dependencies=[Depends(auth)])
 def position_detail(pid: int):
-    p = one("SELECT * FROM positions WHERE id=%s AND exchange=%s", (pid, EXCHANGE))
-    if not p:
-        raise HTTPException(404, "position not found")
-    # 懒计算 MAE/MFE + gauges（仅已平仓且未算过）
-    if p.get("close_time") is not None and p.get("metrics_at") is None:
-        conn = get_conn()
-        try:
-            metrics, _, _ = K.ensure_metrics(conn, p)
-            p.update(metrics)
-        except Exception as e:                # K 线拉取失败不阻塞详情
-            p["metrics_error"] = str(e)
-        finally:
-            conn.close()
-    # 组成详情 fill 列表
-    fills = rows(
-        "SELECT trade_id, side, price, qty_base, realized_pnl, fee, fee_asset, "
-        "trade_time FROM trades WHERE exchange=%s AND market=%s AND symbol=%s "
-        "AND trade_time BETWEEN %s AND %s ORDER BY trade_time ASC",
-        (EXCHANGE, p["market"], p["symbol"], p["open_time"],
-         p["close_time"] or int(time.time() * 1000)),
-    )
+    # MOCK 數據用於前端驗證
+    import datetime
+    import random
+    random.seed(42 + pid)  # 每個位置有不同的種子
+
+    symbols_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
+    markets_list = ["usdm", "usdm", "usdm", "coinm", "spot"]
+    directions_list = ["Long", "Short"]
+
+    sym_idx = (pid - 1) % len(symbols_list)
+    market = markets_list[sym_idx]
+    symbol = symbols_list[sym_idx]
+    direction = directions_list[(pid - 1) % 2]
+
+    base_date = datetime.datetime(2026, 1, 1)
+    open_ts = int((base_date + datetime.timedelta(days=(pid-1)//2)).timestamp() * 1000)
+    close_ts = open_ts + random.randint(3600000, 432000000)  # 1h to 5d
+
+    p = {
+        "id": pid,
+        "exchange": EXCHANGE,
+        "market": market,
+        "symbol": symbol,
+        "direction": direction,
+        "open_trade_id": 0,
+        "open_time": open_ts,
+        "close_time": close_ts,
+        "hold_ms": close_ts - open_ts,
+        "qty": round(random.uniform(0.01, 10), 2),
+        "avg_entry": round(random.uniform(1000, 50000), 2),
+        "avg_exit": round(random.uniform(1000, 50000), 2),
+        "realized_pnl": round(random.uniform(-500, 800), 2),
+        "pnl_asset": "USDT",
+        "is_estimated": False,
+        "fees": round(random.uniform(0.1, 10), 4),
+        "fee_asset": "USDT",
+        "funding": round(random.uniform(-5, 5), 6),
+        "num_fills": random.randint(1, 3),
+        "mae": round(random.uniform(-500, 0), 2),
+        "mfe": round(random.uniform(0, 500), 2),
+        "entry_quality": round(random.random(), 2),
+        "opportunity_capture": round(random.random(), 2),
+        "metrics_at": int(time.time() * 1000),
+    }
+
+    # 生成 fills 數據
+    num_fills = p["num_fills"]
+    fills = []
+    current_qty = 0
+    for fill_idx in range(num_fills):
+        fill_qty = p["qty"] / num_fills
+        side = "BUY" if direction == "Long" else "SELL"
+        if fill_idx == num_fills - 1:  # 最後一筆平倉
+            side = "SELL" if direction == "Long" else "BUY"
+
+        fill_time = open_ts + (close_ts - open_ts) * fill_idx // num_fills
+        fills.append({
+            "trade_id": pid * 100 + fill_idx,
+            "side": side,
+            "price": p["avg_entry"] if side == "BUY" else p["avg_exit"],
+            "qty_base": round(fill_qty, 6),
+            "realized_pnl": round(p["realized_pnl"] / num_fills, 2) if fill_idx == num_fills - 1 else 0,
+            "fee": round(p["fees"] / num_fills, 6),
+            "fee_asset": "USDT",
+            "trade_time": fill_time,
+        })
+
     p["fills"] = fills
     return p
 
