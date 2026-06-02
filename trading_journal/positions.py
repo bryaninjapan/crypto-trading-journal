@@ -244,9 +244,9 @@ def build_positions(fills, funding_map=None):
             net += s
             # 符号翻转：在归零点切分（旧持仓平掉，残量开新仓）
             if cur_fills and prev * net < -EPS:
-                cur_fills.append(f)
+                # 翻转 fill 不属于旧持仓，只作为新持仓起点（避免重复计算 realized_pnl）
                 positions.append(_finalize(market, symbol, direction, cur_fills, True))
-                cur_fills = [f]                # 残量 fill 同时归入新持仓的起点
+                cur_fills = [f]                # 翻转 fill 作为新持仓的起点
                 direction = "Long" if net > 0 else "Short"
                 continue
             cur_fills.append(f)
