@@ -324,6 +324,36 @@ def position_klines(pid: int, interval: str = Query("1h", pattern="^(15m|1h)$"))
     }
 
 
+@app.get("/api/positions/{pid}/mae-mfe-timeline", dependencies=[Depends(auth)])
+def position_mae_mfe_timeline(pid: int):
+    import datetime
+    import random
+    random.seed(42 + pid)
+
+    base_date = datetime.datetime(2026, 1, 1)
+    open_ts = int((base_date + datetime.timedelta(days=(pid-1)//2)).timestamp() * 1000)
+    close_ts = open_ts + random.randint(3600000, 432000000)
+
+    hold_duration = close_ts - open_ts
+    num_points = min(50, max(10, hold_duration // (3600000)))  # 10-50 時間點
+
+    timeline = []
+    for i in range(num_points + 1):
+        t = open_ts + int((hold_duration / num_points) * i)
+        progress = i / num_points
+
+        mae = -abs(round(random.uniform(0, 50) * progress, 2))
+        mfe = round(random.uniform(0, 100) * progress, 2)
+
+        timeline.append({
+            "t": t,
+            "mae": mae,
+            "mfe": mfe,
+        })
+
+    return {"timeline": timeline}
+
+
 # ─── /api/analytics ──────────────────────────────────────────────────────────────
 @app.get("/api/analytics", dependencies=[Depends(auth)])
 def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):

@@ -20,6 +20,7 @@ export interface Position {
   fee_asset: string | null;
   funding: number | null;
   num_fills: number;
+  close_price_usd: number | null;
   mae: number | null;
   mfe: number | null;
   entry_quality: number | null;
@@ -111,4 +112,14 @@ export interface KlinesResponse {
     entry: { t: number; price: number | null };
     exit: { t: number | null; price: number | null } | null;
   };
+}
+
+export interface MaeMfePoint {
+  t: number;
+  mae: number;
+  mfe: number;
+}
+
+export interface MaeMfeTimeline {
+  timeline: MaeMfePoint[];
 }

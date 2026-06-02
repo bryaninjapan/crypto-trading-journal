@@ -5,9 +5,9 @@ export interface Fill {
   side: "BUY" | "SELL";
   price: number;
   qty_base: number;
-  realized_pnl: number;
-  fee: number;
-  fee_asset: string;
+  realized_pnl: number | null;
+  fee: number | null;
+  fee_asset: string | null;
   trade_time: number;
 }
 
@@ -41,9 +41,9 @@ export function FillsTable({ fills, pnl_asset }: { fills: Fill[]; pnl_asset?: st
               </td>
               <td className="px-2 py-2 text-right text-on-surface">{fmtNum(f.price, 6)}</td>
               <td className="px-2 py-2 text-right text-on-surface">{fmtNum(f.qty_base, 6)}</td>
-              <td className="px-2 py-2 text-right text-on-surface-variant">{fmtNum(f.fee, 6)}</td>
+              <td className="px-2 py-2 text-right text-on-surface-variant">{f.fee ? fmtNum(f.fee, 6) : "—"}</td>
               <td className="px-2 py-2 text-right font-semibold">
-                {f.realized_pnl !== 0 ? (
+                {f.realized_pnl !== null && f.realized_pnl !== 0 ? (
                   <span className={f.realized_pnl > 0 ? "text-bullish" : "text-bearish"}>
                     {fmtPnl(f.realized_pnl, pnl_asset || "USDT")}
                   </span>

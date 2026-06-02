@@ -7,8 +7,9 @@ import { FillsTable } from "../components/FillsTable";
 import { DirectionBadge, MarketBadge } from "../components/Badge";
 import { Gauge } from "../components/Gauge";
 import { CandleChart } from "../components/charts/CandleChart";
+import { MaeMfeTimeline } from "../components/charts/MaeMfeTimeline";
 import { Loading, ErrorBlock } from "../components/StateBlock";
-import { fmtPnl, fmtNum, fmtPct, fmtDuration, fmtTime, pnlClass } from "../lib/format";
+import { fmtPnl, fmtNum, fmtDuration, fmtTime, pnlClass } from "../lib/format";
 
 export function PositionDetail() {
   const { id } = useParams();
@@ -17,6 +18,7 @@ export function PositionDetail() {
   const [interval, setInterval] = useState<"15m" | "1h">("1h");
   const { data: p, error, loading } = useApi(() => api.position(pid), [pid]);
   const klines = useApi(() => api.klines(pid, interval), [pid, interval]);
+  const timeline = useApi(() => api.maeMfeTimeline(pid), [pid]);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBlock error={error} />;
@@ -85,27 +87,24 @@ export function PositionDetail() {
           <span className="text-label-caps uppercase text-on-surface-variant">Trade Fills</span>
         </div>
         <div className="border-t border-white/[0.06] px-lg py-md">
-          <FillsTable fills={p.fills || []} pnl_asset={p.pnl_asset} />
+          <FillsTable fills={p.fills || []} pnl_asset={p.pnl_asset ?? undefined} />
         </div>
       </GlassCard>
 
-      {/* Metrics: 3-Column Grid */}
-      <div className="grid grid-cols-1 gap-lg md:grid-cols-3">
-        {/* MAE / MFE */}
-        {(p.mae !== null || p.mfe !== null) && (
-          <GlassCard className="space-y-2">
-            <div className="text-label-caps uppercase text-on-surface-variant">MAE / MFE</div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-data-mono text-bearish text-xs">{fmtPct(p.mae)}</span>
-              <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
-                <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
-                <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
-              </div>
-              <span className="font-mono text-data-mono text-bullish text-xs">{fmtPct(p.mfe)}</span>
-            </div>
-          </GlassCard>
-        )}
+      {/* MAE/MFE Timeline */}
+      {timeline.data && (
+        <GlassCard className="!p-0 overflow-hidden">
+          <div className="border-b border-white/[0.06] px-lg py-md">
+            <span className="text-label-caps uppercase text-on-surface-variant">MAE / MFE Timeline</span>
+          </div>
+          <div className="p-md">
+            <MaeMfeTimeline data={timeline.data} />
+          </div>
+        </GlassCard>
+      )}
 
+      {/* Metrics: 2-Column Grid */}
+      <div className="grid grid-cols-1 gap-lg md:grid-cols-2">
         {/* Entry Quality Gauge */}
         <Gauge label="Entry Quality" value={p.entry_quality} />
 
@@ -148,10 +147,3 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function barPct(mae: number | null, mfe: number | null, adverse: boolean): number {
-  const a = Math.abs(mae ?? 0);
-  const f = Math.abs(mfe ?? 0);
-  const total = a + f;
-  if (total === 0) return 50;
-  return ((adverse ? a : f) / total) * 100;
-}
