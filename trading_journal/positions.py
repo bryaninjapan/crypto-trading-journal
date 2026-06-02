@@ -160,7 +160,8 @@ def _finalize(market, symbol, direction, fills, net_reached_zero):
         if f.get("fee") is not None:
             fees += float(f["fee"])
             fee_asset = fee_asset or f.get("fee_asset")
-        if f.get("realized_pnl") is not None:
+        # 仅在平仓时（net_reached_zero=True）累加 realized_pnl；未平仓持仓的为 0
+        if net_reached_zero and f.get("realized_pnl") is not None:
             realized += float(f["realized_pnl"])
             has_realized = True
 
