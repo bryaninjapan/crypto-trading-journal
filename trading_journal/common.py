@@ -202,6 +202,130 @@ def discover_futures_symbols(income_fn, lookback_ms=None):
     return sorted(symbols)
 
 
+# ─── 资金费（funding）─────────────────────────────────────────────────────────
+FUNDING_DDL = """
+CREATE TABLE IF NOT EXISTS funding (
+  id           SERIAL PRIMARY KEY,
+  exchange     TEXT NOT NULL,
+  market       TEXT NOT NULL,            -- usdm | coinm
+  symbol       TEXT NOT NULL,
+  income_id    BIGINT NOT NULL,          -- Binance tranId，去重锚
+  amount       DOUBLE PRECISION,         -- 资金费金额（usdm:USDT, coinm:币本位）
+  asset        TEXT,
+  income_time  BIGINT NOT NULL,
+  UNIQUE (exchange, market, income_id)
+);
+CREATE INDEX IF NOT EXISTS idx_funding_lookup ON funding (exchange, market, symbol, income_time);
+"""
+
+
+def fetch_funding(income_fn, lookback_ms=None):
+    """
+    用 income 接口拉 FUNDING_FEE 流水（与 discover_futures_symbols 同一接口）。
+    income 受 7 天窗口限制：回填扫满 1500 天，增量只扫近窗。
+    返回原始 income dict 列表。
+    """
+    WINDOW = 7 * 24 * 3600 * 1000
+    now = int(time.time() * 1000)
+    start = now - (lookback_ms if lookback_ms else 1500 * 24 * 3600 * 1000)
+    out = []
+    cur = now
+    while cur > start:
+        ws = max(start, cur - WINDOW)
+        rows = safe_request(income_fn, incomeType="FUNDING_FEE",
+                            startTime=ws, endTime=cur, limit=1000)
+        out.extend(rows)
+        cur = ws - 1
+    return out
+
+
+def normalize_funding(market, r):
+    """income dict → funding 行（与 FUNDING_COLUMNS 对齐）。"""
+    return (
+        EXCHANGE, market, r.get("symbol") or "",
+        int(r.get("tranId") or r.get("tradeId") or 0),
+        _f(r.get("income")), r.get("asset"),
+        int(r.get("time")),
+    )
+
+
+FUNDING_COLUMNS = ["exchange", "market", "symbol", "income_id",
+                   "amount", "asset", "income_time"]
+
+
+def upsert_funding(conn, rows):
+    """ON CONFLICT(exchange,market,income_id) DO NOTHING。返回新增行数。"""
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(FUNDING_DDL)
+        sql = (
+            f"INSERT INTO funding ({','.join(FUNDING_COLUMNS)}) VALUES %s "
+            "ON CONFLICT (exchange, market, income_id) DO NOTHING"
+        )
+        execute_values(cur, sql, rows)
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
+# ─── 账户余额快照（balances）────────────────────────────────────────────────────
+BALANCES_DDL = """
+CREATE TABLE IF NOT EXISTS balances (
+  id             SERIAL PRIMARY KEY,
+  exchange       TEXT NOT NULL,
+  market         TEXT NOT NULL,           -- spot | usdm | coinm
+  asset          TEXT NOT NULL,
+  free           DOUBLE PRECISION,
+  locked         DOUBLE PRECISION,
+  balance        DOUBLE PRECISION,        -- 钱包总额（free+locked / walletBalance）
+  snapshot_time  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_balances_latest ON balances (exchange, market, snapshot_time);
+"""
+
+
+def snapshot_balances(client, conn):
+    """
+    抓取三市场账户余额快照，存入 balances。返回写入行数。
+    过滤掉余额为 0 的资产。
+    """
+    now = int(time.time() * 1000)
+    rows = []
+
+    # 现货
+    for b in safe_request(client.get_account)["balances"]:
+        free, locked = float(b["free"]), float(b["locked"])
+        if free + locked <= 0:
+            continue
+        rows.append((EXCHANGE, "spot", b["asset"], free, locked, free + locked, now))
+
+    # USD-M
+    for b in safe_request(client.futures_account_balance):
+        wb = float(b.get("balance", 0))
+        if wb == 0:
+            continue
+        rows.append((EXCHANGE, "usdm", b["asset"], None, None, wb, now))
+
+    # COIN-M
+    for b in safe_request(client.futures_coin_account_balance):
+        wb = float(b.get("balance", 0))
+        if wb == 0:
+            continue
+        rows.append((EXCHANGE, "coinm", b["asset"], None, None, wb, now))
+
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(BALANCES_DDL)
+        sql = ("INSERT INTO balances "
+               "(exchange,market,asset,free,locked,balance,snapshot_time) VALUES %s")
+        execute_values(cur, sql, rows)
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
 # ─── Telegram ─────────────────────────────────────────────────────────────────
 def telegram_send(text):
     token = os.getenv("TELEGRAM_BOT_TOKEN")

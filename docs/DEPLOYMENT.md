@@ -77,6 +77,11 @@ CREATE INDEX idx_trades_lookup ON trades (exchange, market, symbol, trade_id);
 CREATE INDEX idx_trades_time ON trades (trade_time);
 ```
 
+> **派生表自动创建**：`positions`、`funding`、`balances` 三张表由代码在
+> backfill/sync/positions 运行时自动 `CREATE TABLE IF NOT EXISTS`，无需手动建。
+> 表结构见 `trading_journal/positions.py`（`DDL`）与 `trading_journal/common.py`
+> （`FUNDING_DDL` / `BALANCES_DDL`）。
+
 ### 5. 测试脚本
 
 ```bash
@@ -143,15 +148,33 @@ python3 -m trading_journal.sync_binance
 新增成交 — 现货 X | USD-M Y | COIN-M Z
 ```
 
-### 9. 启动仪表板服务
+### 8.5 构建前端 SPA
+
+新仪表盘是 React + Vite SPA（`frontend/`），构建产物输出到
+`trading_journal/static/`，由 FastAPI 托管（同源，沿用 HTTP Basic）。
+
+```bash
+# VM 上需 Node 18+（apt 装 nodejs/npm 或用 nvm）
+cd /home/ubuntu/trading-journal/frontend
+npm ci          # 或 npm install
+npm run build   # 产物 → ../trading_journal/static/
+```
+
+> `static/` 在 `.gitignore` 中，**部署时在 VM 上构建**，不入库。
+> 开发时 `npm run dev` 启 Vite（:5173），`/api` 自动代理到本地 uvicorn（:8000）。
+
+### 9. 启动仪表盘服务（新 SPA + JSON API）
+
+新生产入口是 `trading_journal.api:app`（旧的 `dashboard:app` 服务端渲染版已废弃，
+保留作对照）。
 
 #### 方式 A：直接运行（调试用）
 
 ```bash
-python3 -m uvicorn trading_journal.dashboard:app --host 0.0.0.0 --port 8000 --reload
+python3 -m uvicorn trading_journal.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-访问 `http://server-ip:8000/summary`（HTTP Basic 认证）
+访问 `http://server-ip:8000/`（SPA），API 在 `/api/*`（均需 HTTP Basic 认证）。
 
 #### 方式 B：SystemD 服务（生产）
 
@@ -167,7 +190,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/trading-journal
 Environment="PATH=/home/ubuntu/trading-journal/venv/bin"
-ExecStart=/home/ubuntu/trading-journal/venv/bin/python3 -m uvicorn trading_journal.dashboard:app --host 0.0.0.0 --port 8000
+ExecStart=/home/ubuntu/trading-journal/venv/bin/python3 -m uvicorn trading_journal.api:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=10
 

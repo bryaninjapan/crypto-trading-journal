@@ -1,0 +1,123 @@
+import { useParams, useNavigate } from "react-router-dom";
+import { api } from "../api/client";
+import { useApi } from "../lib/useApi";
+import { GlassCard } from "../components/GlassCard";
+import { DirectionBadge, MarketBadge } from "../components/Badge";
+import { Gauge } from "../components/Gauge";
+import { CandleChart } from "../components/charts/CandleChart";
+import { Loading, ErrorBlock } from "../components/StateBlock";
+import { fmtPnl, fmtNum, fmtPct, fmtDuration, fmtTime, pnlClass } from "../lib/format";
+
+export function PositionDetail() {
+  const { id } = useParams();
+  const pid = Number(id);
+  const nav = useNavigate();
+  const { data: p, error, loading } = useApi(() => api.position(pid), [pid]);
+  const klines = useApi(() => api.klines(pid), [pid]);
+
+  if (loading) return <Loading />;
+  if (error) return <ErrorBlock error={error} />;
+  if (!p) return null;
+
+  return (
+    <div className="space-y-md">
+      <button
+        onClick={() => nav(-1)}
+        className="flex items-center gap-1 text-on-surface-variant hover:text-primary"
+      >
+        <span className="material-symbols-outlined">arrow_back</span>
+        <span className="text-data-mono">Back</span>
+      </button>
+
+      {/* 概要卡 */}
+      <GlassCard className="flex flex-col gap-md md:flex-row md:justify-between">
+        <div className="w-full space-y-2 md:w-1/2">
+          <div className="flex items-center gap-2">
+            <h2 className="font-sans text-headline-md font-bold">{p.symbol}</h2>
+            <DirectionBadge direction={p.direction} />
+            <MarketBadge market={p.market} />
+          </div>
+          <Row label="Open" value={`${fmtNum(p.avg_entry, 4)} @ ${fmtTime(p.open_time)}`} />
+          <Row
+            label="Close"
+            value={p.close_time ? `${fmtNum(p.avg_exit, 4)} @ ${fmtTime(p.close_time)}` : "仍持仓"}
+          />
+          <Row label="Qty" value={fmtNum(p.qty, 6)} />
+          <Row label="Fills" value={String(p.num_fills)} />
+        </div>
+        <div className="flex w-full flex-col justify-end gap-2 border-t border-white/10 pt-md md:w-1/2 md:border-l md:border-t-0 md:pl-lg md:pt-0">
+          <Row label="Hold Time" value={fmtDuration(p.hold_ms)} />
+          <Row label="Fees" value={p.fees ? `${fmtNum(p.fees, 6)} ${p.fee_asset ?? ""}` : "—"} />
+          <Row label="Total Funding" value={p.funding === null ? "N/A" : fmtNum(p.funding, 6)} />
+          <div className="flex items-center justify-between">
+            <span className="font-sans text-headline-md font-bold">Realised PNL</span>
+            <span className={`font-mono text-headline-md ${pnlClass(p.realized_pnl)}`}>
+              {fmtPnl(p.realized_pnl, p.pnl_asset || "USDT")}
+            </span>
+          </div>
+        </div>
+      </GlassCard>
+
+      {/* 蜡烛图 */}
+      <GlassCard className="!p-sm md:!p-md">
+        {klines.loading ? (
+          <Loading />
+        ) : klines.error ? (
+          <ErrorBlock error={klines.error} />
+        ) : klines.data ? (
+          <>
+            <div className="mb-2 flex justify-between px-2 text-data-mono text-on-surface-variant">
+              <span>{klines.data.symbol}</span>
+              <span>{klines.data.interval}</span>
+            </div>
+            <CandleChart data={klines.data} />
+          </>
+        ) : null}
+      </GlassCard>
+
+      {/* MAE / MFE */}
+      {(p.mae !== null || p.mfe !== null) && (
+        <GlassCard className="space-y-2">
+          <div className="flex justify-between text-data-mono text-on-surface-variant">
+            <span>MAE / MFE（相对入场均价）</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-data-mono text-bearish">{fmtPct(p.mae)}</span>
+            <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
+              <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
+              <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
+            </div>
+            <span className="font-mono text-data-mono text-bullish">{fmtPct(p.mfe)}</span>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* 仪表盘 */}
+      <div className="grid grid-cols-1 gap-md md:grid-cols-2">
+        <Gauge label="Entry Quality" value={p.entry_quality} />
+        <Gauge label="Opportunity Capture" value={p.opportunity_capture} />
+      </div>
+
+      {p.metrics_error && (
+        <div className="text-data-mono text-bearish">指标计算失败：{p.metrics_error}</div>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between font-mono text-data-mono">
+      <span className="text-on-surface-variant">{label}</span>
+      <span className="text-on-surface">{value}</span>
+    </div>
+  );
+}
+
+function barPct(mae: number | null, mfe: number | null, adverse: boolean): number {
+  const a = Math.abs(mae ?? 0);
+  const f = Math.abs(mfe ?? 0);
+  const total = a + f;
+  if (total === 0) return 50;
+  return ((adverse ? a : f) / total) * 100;
+}

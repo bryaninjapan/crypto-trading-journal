@@ -67,3 +67,11 @@ Thumbs.db
 .claude/
 cache/
 temp/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+.venv-test/
+
+# SPA 构建产物（由 `npm run build` 生成，部署时在 VM 上构建）
+trading_journal/static/
