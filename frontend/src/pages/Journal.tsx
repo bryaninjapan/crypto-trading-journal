@@ -1,21 +1,24 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
-import { DirectionBadge, MarketBadge, EstimatedBadge } from "../components/Badge";
+import { Pagination } from "../components/Pagination";
+import { TradeRow } from "../components/TradeRow";
+import { MarketBadge, EstimatedBadge } from "../components/Badge";
 import { Loading, ErrorBlock, Empty } from "../components/StateBlock";
-import { fmtPnl, fmtNum, fmtDuration, fmtTime, pnlClass } from "../lib/format";
+import { fmtPnl, fmtNum, fmtDuration, pnlClass } from "../lib/format";
 
 const MARKETS = ["", "usdm", "coinm", "spot"];
 
 export function Journal() {
   const [market, setMarket] = useState("");
-  const nav = useNavigate();
+  const [limit, setLimit] = useState(20);
+  const [offset, setOffset] = useState(0);
+
   const symbols = useApi(() => api.symbols(market || undefined), [market]);
   const positions = useApi(
-    () => api.positions({ market: market || undefined, status: "closed", limit: 50 }),
-    [market],
+    () => api.positions({ market: market || undefined, status: "closed", limit, offset }),
+    [market, limit, offset],
   );
 
   return (
@@ -86,9 +89,9 @@ export function Journal() {
         )}
       </section>
 
-      {/* 最近持仓列表 → 详情 */}
+      {/* Trade History Table */}
       <section className="space-y-sm">
-        <h2 className="text-label-caps uppercase text-on-surface-variant">Recent Positions</h2>
+        <h2 className="text-label-caps uppercase text-on-surface-variant">Trade History</h2>
         {positions.loading ? (
           <Loading />
         ) : positions.error ? (
@@ -96,31 +99,38 @@ export function Journal() {
         ) : !positions.data?.positions.length ? (
           <Empty />
         ) : (
-          <div className="space-y-2">
-            {positions.data.positions.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => nav(`/positions/${p.id}`)}
-                className="glass-card glass-card-hover flex w-full items-center justify-between !p-md text-left"
-              >
-                <div className="flex items-center gap-2">
-                  <DirectionBadge direction={p.direction} />
-                  <span className="font-sans text-body-bold font-semibold">{p.symbol}</span>
-                  <span className="font-mono text-data-mono text-on-surface-variant">
-                    {fmtTime(p.open_time)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="font-mono text-data-mono text-on-surface-variant">
-                    {fmtDuration(p.hold_ms)}
-                  </span>
-                  <span className={`font-mono text-body-bold ${pnlClass(p.realized_pnl)}`}>
-                    {fmtPnl(p.realized_pnl, p.pnl_asset || "USDT")}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
+          <GlassCard className="!p-0 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-data-mono text-xs md:text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.06] text-on-surface-variant">
+                    <th className="px-lg py-2 text-left">#</th>
+                    <th className="px-2 py-2 text-left">Symbol</th>
+                    <th className="px-2 py-2 text-left">Open Price @ Time</th>
+                    <th className="px-2 py-2 text-left">Hold</th>
+                    <th className="px-2 py-2 text-left">Close Price @ Time</th>
+                    <th className="px-lg py-2 text-right">PNL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.data.positions.map((p, idx) => (
+                    <TradeRow
+                      key={p.id}
+                      position={p}
+                      rowNum={offset + idx + 1}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              limit={limit}
+              setLimit={setLimit}
+              offset={offset}
+              setOffset={setOffset}
+              total={positions.data.total}
+            />
+          </GlassCard>
         )}
       </section>
     </div>

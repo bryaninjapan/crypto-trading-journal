@@ -8559,9 +8559,10 @@ function useApi(fn2, deps = []) {
 function GlassCard({
   children,
   className = "",
-  hover = false
+  hover = false,
+  noOverflow = false
 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `glass-card ${hover ? "glass-card-hover" : ""} p-lg ${className}`, children });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `glass-card ${hover ? "glass-card-hover" : ""} ${noOverflow ? "overflow-visible" : ""} p-lg ${className}`, children });
 }
 function KpiCard({
   label,
@@ -105770,7 +105771,13 @@ const DARK_LAYOUT = {
   xaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
   yaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
   legend: { orientation: "h", y: -0.2, font: { color: "#c7c4d7" } },
-  showlegend: false
+  showlegend: false,
+  hovermode: "x unified",
+  hoverlabel: {
+    bgcolor: "#1c1f29",
+    bordercolor: "#464554",
+    font: { color: "#e0e2ef", family: "JetBrains Mono, monospace", size: 11 }
+  }
 };
 function PlotlyChart({
   data,
@@ -105788,24 +105795,20 @@ function PlotlyChart({
     );
   }, [data, layout, height]);
   reactExports.useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(() => {
+      if (ref.current) Plotly.relayout(ref.current, { autosize: true });
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  reactExports.useEffect(() => {
     const el2 = ref.current;
     return () => {
       if (el2) Plotly.purge(el2);
     };
   }, []);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref, style: { width: "100%", height } });
-}
-function Loading() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center py-20 text-on-surface-variant", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin", children: "progress_activity" }) });
-}
-function ErrorBlock({ error }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "glass-card !p-lg text-bearish", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-body-bold", children: "加载失败" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 font-mono text-data-mono text-on-surface-variant", children: error })
-  ] });
-}
-function Empty({ text = "暂无数据" }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "py-16 text-center text-on-surface-variant", children: text });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref, style: { width: "100%", height, overflow: "visible" } });
 }
 function fmtNum(n2, digits = 2) {
   if (n2 === null || n2 === void 0 || Number.isNaN(n2)) return "—";
@@ -105855,25 +105858,102 @@ const MARKET_LABEL = {
   usdm: "USD-M",
   coinm: "COIN-M"
 };
+function BalanceDonut({ balances }) {
+  const valid = balances.filter((b2) => b2.balance && b2.balance > 0).sort((a2, b2) => (b2.balance ?? 0) - (a2.balance ?? 0));
+  if (!valid.length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-data-mono text-on-surface-variant", children: "No balances" });
+  }
+  const topN = 4;
+  const top = valid.slice(0, topN);
+  const others = valid.slice(topN);
+  const otherSum = others.reduce((s, b2) => s + (b2.balance ?? 0), 0);
+  const labels = [...top.map((b2) => b2.asset), ...otherSum > 0 ? ["Others"] : []];
+  const values = [...top.map((b2) => b2.balance ?? 0), ...otherSum > 0 ? [otherSum] : []];
+  const total = values.reduce((s, v2) => s + v2, 0);
+  const colors = ["#c0c1ff", "#7bd0ff", "#ddb7ff", "#10B981", "#EF4444"];
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    PlotlyChart,
+    {
+      height: 180,
+      data: [
+        {
+          values,
+          labels,
+          type: "pie",
+          hole: 0.65,
+          marker: { colors: colors.slice(0, labels.length) },
+          textinfo: "none",
+          hovertemplate: "<b>%{label}</b><br>%{value:.6g}<extra></extra>"
+        }
+      ],
+      layout: {
+        showlegend: true,
+        legend: { orientation: "v", x: 1.02, y: 1, xanchor: "left", yanchor: "top" },
+        annotations: [
+          {
+            text: `${fmtNum(total, 6)}`,
+            font: { size: 18, color: "#e0e2ef" },
+            showarrow: false
+          }
+        ]
+      }
+    }
+  ) });
+}
+function Loading() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center py-20 text-on-surface-variant", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin", children: "progress_activity" }) });
+}
+function ErrorBlock({ error }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "glass-card !p-lg text-bearish", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-body-bold", children: "加载失败" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 font-mono text-data-mono text-on-surface-variant", children: error })
+  ] });
+}
+function Empty({ text = "暂无数据" }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "py-16 text-center text-on-surface-variant", children: text });
+}
 function Dashboard() {
-  var _a;
-  const { data, error, loading } = useApi(() => api.summary(), []);
-  if (loading) return /* @__PURE__ */ jsxRuntimeExports.jsx(Loading, {});
-  if (error) return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBlock, { error });
-  if (!data) return null;
+  var _a, _b;
+  const [balanceMarket, setBalanceMarket] = reactExports.useState("usdm");
+  const summary = useApi(() => api.summary(), []);
+  const analytics = useApi(() => api.analytics("usdm"), []);
+  if (summary.loading || analytics.loading) return /* @__PURE__ */ jsxRuntimeExports.jsx(Loading, {});
+  if (summary.error || analytics.error) return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBlock, { error: summary.error ?? analytics.error });
+  if (!summary.data || !analytics.data) return null;
+  const data = summary.data;
+  const ana = analytics.data;
   const pnl = data.kpi.usdm_realized_pnl;
   const curve = data.equity_curve;
   const byMarket = {};
   for (const b2 of data.balances) (byMarket[_a = b2.market] ?? (byMarket[_a] = [])).push(b2);
+  const marketBalances = balanceMarket ? byMarket[balanceMarket] || [] : data.balances;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-lg", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "font-sans text-headline-md font-bold", children: "Dashboard" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "relative overflow-hidden", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Consolidated PNL (USD-M)" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `mt-2 font-mono text-display-lg-mobile md:text-display-lg ${pnlClass(pnl)}`, children: fmtPnl(pnl) }),
-      curve.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-1 gap-md md:grid-cols-[1fr_2fr]", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-md", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Total Balance" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(BalanceDonut, { balances: data.balances }) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-md", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Futures PNL", value: fmtPnl(pnl), valueClass: pnlClass(pnl) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          KpiCard,
+          {
+            label: "Win Rate",
+            value: `${fmtNum(data.kpi.win_rate)}%`,
+            valueClass: data.kpi.win_rate > 50 ? "text-bullish" : "text-bearish"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Total Trades", value: fmtNum(data.kpi.total_positions, 0) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Avg Hold", value: fmtDuration(((_b = ana.statistics) == null ? void 0 : _b.avg_hold_ms) ?? 0) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { noOverflow: true, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-between mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-headline-md font-bold", children: "Equity Curve" }) }),
+      curve.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(
         PlotlyChart,
         {
-          height: 180,
+          height: 300,
           data: [
             {
               x: curve.map((p2) => new Date(p2.t)),
@@ -105886,31 +105966,105 @@ function Dashboard() {
             }
           ]
         }
-      ) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 text-data-mono text-on-surface-variant", children: data.note })
+      )
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-1 gap-md md:grid-cols-3", children: [
-      Object.entries(byMarket).map(([market, items]) => /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { hover: true, className: "!p-md", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-label-caps uppercase text-on-surface-variant", children: [
-          MARKET_LABEL[market],
-          " Balance"
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 space-y-1", children: items.slice(0, 4).map((b2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between font-mono text-data-mono", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-on-surface-variant", children: b2.asset }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-on-surface", children: fmtNum(b2.balance ?? 0, 6) })
-        ] }, b2.asset)) })
-      ] }, market)),
-      data.balances.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(GlassCard, { className: "!p-md text-on-surface-variant md:col-span-3", children: "暂无余额快照 —— 跑一次 sync_binance 后生成。" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-md md:grid-cols-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Total Positions", value: fmtNum(data.kpi.total_positions, 0) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Win Rate", value: `${fmtNum(data.kpi.win_rate)}%` }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        KpiCard,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-0 overflow-hidden", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "border-b border-white/[0.08] px-lg py-md", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Balances" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1", children: ["usdm", "coinm", "spot"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            onClick: () => setBalanceMarket(m2),
+            className: `rounded-full px-2 py-1 text-data-mono text-xs transition-colors ${balanceMarket === m2 ? "bg-primary/20 text-primary" : "text-on-surface-variant hover:text-on-surface"}`,
+            children: MARKET_LABEL[m2]
+          },
+          m2
+        )) })
+      ] }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: "w-full text-data-mono text-xs md:text-sm", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("thead", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: "border-b border-white/[0.06] text-on-surface-variant", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-lg py-2 text-left", children: "Asset" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-2 py-2 text-right", children: "Amount" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-2 py-2 text-left", children: "Allocation" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-lg py-2 text-right", children: "Value (est.)" })
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: marketBalances.slice(0, 10).map((b2) => {
+          const total = marketBalances.reduce((s, x2) => s + (x2.balance ?? 0), 0);
+          const pct = total > 0 ? (b2.balance ?? 0) / total * 100 : 0;
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: "border-b border-white/[0.06] hover:bg-surface-container/50", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-lg py-2 font-semibold text-on-surface", children: b2.asset || "—" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-2 py-2 text-right text-on-surface", children: fmtNum(b2.balance, 6) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-2 py-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-1 flex-grow rounded-full bg-surface-container-highest max-w-[100px]", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "div",
+                {
+                  className: "h-full rounded-full bg-primary",
+                  style: { width: `${Math.min(pct, 100)}%` }
+                }
+              ) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-right min-w-[30px]", children: [
+                fmtNum(pct, 1),
+                "%"
+              ] })
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-lg py-2 text-right text-on-surface-variant", children: "—" })
+          ] }, b2.asset || "unknown");
+        }) })
+      ] }) })
+    ] })
+  ] });
+}
+function Pagination({
+  limit,
+  setLimit,
+  offset,
+  setOffset,
+  total
+}) {
+  const pageNum = Math.floor(offset / limit) + 1;
+  const totalPages = Math.ceil(total / limit);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between border-t border-white/[0.06] px-lg py-md", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-data-mono text-sm text-on-surface-variant", children: "Rows:" }),
+      [10, 20, 50].map((n2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
         {
-          label: "Total PNL",
-          value: fmtPnl(pnl),
-          valueClass: pnlClass(pnl)
+          onClick: () => {
+            setLimit(n2);
+            setOffset(0);
+          },
+          className: `rounded px-2 py-1 text-data-mono text-xs transition-colors ${limit === n2 ? "bg-primary/20 text-primary" : "text-on-surface-variant hover:text-on-surface"}`,
+          children: n2
+        },
+        n2
+      ))
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-data-mono text-sm text-on-surface-variant", children: [
+      "Page ",
+      pageNum,
+      " of ",
+      totalPages,
+      " (",
+      total,
+      " total)"
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: () => setOffset(Math.max(0, offset - limit)),
+          disabled: offset === 0,
+          className: "rounded px-2 py-1 text-data-mono text-xs disabled:opacity-40 hover:bg-surface-container",
+          children: "← Prev"
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: () => setOffset(offset + limit),
+          disabled: offset + limit >= total,
+          className: "rounded px-2 py-1 text-data-mono text-xs disabled:opacity-40 hover:bg-surface-container",
+          children: "Next →"
         }
       )
     ] })
@@ -105937,15 +106091,38 @@ function MarketBadge({ market }) {
 function EstimatedBadge() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "pill bg-white/5 text-on-surface-variant", title: "现货 FIFO 估算，非交易所口径", children: "EST" });
 }
+function TradeRow({ position, rowNum }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: "border-b border-white/[0.06] hover:bg-surface-container/50", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("td", { className: "px-lg py-2 text-data-mono text-xs text-on-surface-variant", children: [
+      "#",
+      rowNum
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-2 py-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(DirectionBadge, { direction: position.direction }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-body-bold font-semibold text-on-surface", children: position.symbol })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("td", { className: "px-2 py-2 text-data-mono text-xs", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface", children: fmtNum(position.avg_entry, 6) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface-variant text-[10px]", children: fmtTime(position.open_time) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-2 py-2 text-data-mono text-xs text-on-surface", children: fmtDuration(position.hold_ms) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-2 py-2 text-data-mono text-xs", children: position.close_time ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface", children: fmtNum(position.avg_exit, 6) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface-variant text-[10px]", children: fmtTime(position.close_time) })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface-variant", children: "—" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: `px-lg py-2 text-right text-data-mono text-xs font-semibold ${pnlClass(position.realized_pnl)}`, children: fmtPnl(position.realized_pnl, position.pnl_asset || "USDT") })
+  ] });
+}
 const MARKETS = ["", "usdm", "coinm", "spot"];
 function Journal() {
   var _a, _b;
   const [market, setMarket] = reactExports.useState("");
-  const nav = useNavigate();
+  const [limit, setLimit] = reactExports.useState(20);
+  const [offset, setOffset] = reactExports.useState(0);
   const symbols = useApi(() => api.symbols(market || void 0), [market]);
   const positions = useApi(
-    () => api.positions({ market: market || void 0, status: "closed", limit: 50 }),
-    [market]
+    () => api.positions({ market: market || void 0, status: "closed", limit, offset }),
+    [market, limit, offset]
   );
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-lg", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
@@ -105999,26 +106176,37 @@ function Journal() {
       ] }, `${s.market}-${s.symbol}`)) })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "space-y-sm", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-label-caps uppercase text-on-surface-variant", children: "Recent Positions" }),
-      positions.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx(Loading, {}) : positions.error ? /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBlock, { error: positions.error }) : !((_b = positions.data) == null ? void 0 : _b.positions.length) ? /* @__PURE__ */ jsxRuntimeExports.jsx(Empty, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-2", children: positions.data.positions.map((p2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          onClick: () => nav(`/positions/${p2.id}`),
-          className: "glass-card glass-card-hover flex w-full items-center justify-between !p-md text-left",
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(DirectionBadge, { direction: p2.direction }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-body-bold font-semibold", children: p2.symbol }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-data-mono text-on-surface-variant", children: fmtTime(p2.open_time) })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-4", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-data-mono text-on-surface-variant", children: fmtDuration(p2.hold_ms) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `font-mono text-body-bold ${pnlClass(p2.realized_pnl)}`, children: fmtPnl(p2.realized_pnl, p2.pnl_asset || "USDT") })
-            ] })
-          ]
-        },
-        p2.id
-      )) })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-label-caps uppercase text-on-surface-variant", children: "Trade History" }),
+      positions.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx(Loading, {}) : positions.error ? /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBlock, { error: positions.error }) : !((_b = positions.data) == null ? void 0 : _b.positions.length) ? /* @__PURE__ */ jsxRuntimeExports.jsx(Empty, {}) : /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-0 overflow-hidden", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: "w-full text-data-mono text-xs md:text-sm", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("thead", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: "border-b border-white/[0.06] text-on-surface-variant", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-lg py-2 text-left", children: "#" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-2 py-2 text-left", children: "Symbol" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-2 py-2 text-left", children: "Open Price @ Time" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-2 py-2 text-left", children: "Hold" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-2 py-2 text-left", children: "Close Price @ Time" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-lg py-2 text-right", children: "PNL" })
+          ] }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: positions.data.positions.map((p2, idx) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+            TradeRow,
+            {
+              position: p2,
+              rowNum: offset + idx + 1
+            },
+            p2.id
+          )) })
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Pagination,
+          {
+            limit,
+            setLimit,
+            offset,
+            setOffset,
+            total: positions.data.total
+          }
+        )
+      ] })
     ] })
   ] });
 }

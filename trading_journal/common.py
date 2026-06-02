@@ -15,8 +15,7 @@ common.py — Binance 交易记录抓取共享模块
 import os
 import time
 import requests
-import psycopg2
-from psycopg2.extras import execute_values
+import sqlite3
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 

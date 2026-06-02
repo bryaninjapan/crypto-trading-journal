@@ -20,12 +20,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-try:
-    from .common import get_conn
-    from . import klines as K
-except ImportError:
-    from common import get_conn
-    import klines as K
+from .common import get_conn
+from . import klines as K
 
 load_dotenv()
 app = FastAPI(title="Trading Journal API")
@@ -72,44 +68,39 @@ def cumsum(series):
 # ─── /api/summary ──────────────────────────────────────────────────────────────
 @app.get("/api/summary", dependencies=[Depends(auth)])
 def summary():
-    # 最新余额快照（按市场）
-    bal = rows(
-        "SELECT market, asset, free, locked, balance FROM balances "
-        "WHERE exchange=%s AND snapshot_time=("
-        "  SELECT MAX(snapshot_time) FROM balances WHERE exchange=%s) "
-        "ORDER BY market, balance DESC",
-        (EXCHANGE, EXCHANGE),
-    )
-    # KPI（已平仓）
-    kpi = one(
-        "SELECT COUNT(*) total, "
-        "COUNT(*) FILTER (WHERE realized_pnl>0) wins, "
-        "COUNT(*) FILTER (WHERE realized_pnl<0) losses, "
-        "COALESCE(SUM(realized_pnl) FILTER (WHERE market='usdm'),0) usdm_pnl "
-        "FROM positions WHERE exchange=%s AND close_time IS NOT NULL",
-        (EXCHANGE,),
-    ) or {}
-    decided = (kpi.get("wins", 0) or 0) + (kpi.get("losses", 0) or 0)
-    win_rate = round(kpi.get("wins", 0) / decided * 100, 2) if decided else 0.0
-    # USD-M 权益曲线（按平仓日累计）
-    daily = rows(
-        "SELECT (close_time/86400000)*86400000 AS day_ms, SUM(realized_pnl) pnl "
-        "FROM positions WHERE exchange=%s AND market='usdm' AND close_time IS NOT NULL "
-        "GROUP BY day_ms ORDER BY day_ms",
-        (EXCHANGE,),
-    )
-    equity = [{"t": int(d["day_ms"]), "cum": v}
-              for d, v in zip(daily, cumsum([float(d["pnl"] or 0) for d in daily]))]
+    # MOCK 數據用於前端驗證
+    import datetime
+    import random
+    random.seed(42)  # 固定種子
+    base_date = datetime.datetime(2026, 1, 1)
+    equity = []
+    cum_pnl = 1000.0
+    trend = 25.0  # 平緩上升趨勢
+    for i in range(120):
+        # 趨勢 + 隨機波動
+        daily_pnl = trend + random.uniform(-60, 80)
+        cum_pnl += daily_pnl
+        equity.append({
+            "t": int((base_date + datetime.timedelta(days=i)).timestamp() * 1000),
+            "cum": round(cum_pnl, 2)
+        })
+
     return {
-        "balances": bal,
+        "balances": [
+            {"market": "usdm", "asset": "USDT", "free": 5000.0, "locked": 0.0, "balance": 5000.0},
+            {"market": "usdm", "asset": "BTC", "free": 0.5, "locked": 0.0, "balance": 0.5},
+            {"market": "usdm", "asset": "ETH", "free": 2.0, "locked": 0.0, "balance": 2.0},
+            {"market": "coinm", "asset": "USDT", "free": 3000.0, "locked": 0.0, "balance": 3000.0},
+            {"market": "spot", "asset": "BNB", "free": 10.0, "locked": 0.0, "balance": 10.0},
+        ],
         "kpi": {
-            "total_positions": kpi.get("total", 0),
-            "win_rate": win_rate,
-            "usdm_realized_pnl": round(float(kpi.get("usdm_pnl", 0) or 0), 4),
+            "total_positions": 156,
+            "win_rate": 62.5,
+            "usdm_realized_pnl": 3250.75,
             "pnl_asset": "USDT",
         },
         "equity_curve": equity,
-        "note": "Consolidated PNL 暂仅 Binance（Flipster 延后）；统计基于已平仓持仓。",
+        "note": "MOCK 數據用於前端驗證",
     }
 
 
@@ -127,32 +118,73 @@ def list_positions(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    where = ["exchange=%s"]
-    args = [EXCHANGE]
-    if market:
-        where.append("market=%s"); args.append(market)
-    if symbol:
-        where.append("symbol=%s"); args.append(symbol)
-    if direction:
-        where.append("direction=%s"); args.append(direction)
-    if status == "open":
-        where.append("close_time IS NULL")
-    elif status == "closed":
-        where.append("close_time IS NOT NULL")
-    if start:
-        where.append("open_time>=%s"); args.append(start)
-    if end:
-        where.append("open_time<=%s"); args.append(end)
-    wsql = " AND ".join(where)
-    total = one(f"SELECT COUNT(*) n FROM positions WHERE {wsql}", tuple(args))["n"]
-    data = rows(
-        f"SELECT id, market, symbol, direction, open_trade_id, open_time, close_time, "
-        f"hold_ms, qty, avg_entry, avg_exit, realized_pnl, pnl_asset, is_estimated, "
-        f"fees, fee_asset, funding, num_fills, mae, mfe, entry_quality, "
-        f"opportunity_capture FROM positions WHERE {wsql} "
-        f"ORDER BY {sort} {order.upper()} NULLS LAST LIMIT %s OFFSET %s",
-        tuple(args) + (limit, offset),
-    )
+    # MOCK 數據用於前端驗證
+    import datetime
+    import random
+    random.seed(42)
+
+    base_date = datetime.datetime(2026, 1, 1)
+    symbols_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
+    markets_list = ["usdm", "usdm", "usdm", "coinm", "spot"]
+    directions_list = ["Long", "Short"]
+
+    all_positions = []
+    for i in range(156):
+        sym_idx = i % len(symbols_list)
+        open_ts = int((base_date + datetime.timedelta(days=i//2)).timestamp() * 1000)
+        close_ts = open_ts + random.randint(3600000, 432000000)  # 1 hour to 5 days
+        pnl = random.uniform(-500, 800)
+
+        pos = {
+            "id": i + 1,
+            "market": markets_list[sym_idx],
+            "symbol": symbols_list[sym_idx],
+            "direction": random.choice(directions_list),
+            "open_trade_id": 0,
+            "open_time": open_ts,
+            "close_time": close_ts,
+            "hold_ms": close_ts - open_ts,
+            "qty": round(random.uniform(0.01, 10), 2),
+            "avg_entry": round(random.uniform(1000, 50000), 2),
+            "avg_exit": round(random.uniform(1000, 50000), 2),
+            "realized_pnl": round(pnl, 2),
+            "pnl_asset": "USDT",
+            "is_estimated": False,
+            "fees": round(abs(pnl) * 0.001, 2),
+            "fee_asset": "USDT",
+            "funding": 0.0,
+            "num_fills": random.randint(1, 3),
+            "mae": round(random.uniform(-500, 0), 2),
+            "mfe": round(random.uniform(0, 500), 2),
+            "entry_quality": round(random.random(), 2),
+            "opportunity_capture": round(random.random(), 2),
+        }
+
+        # Filter by market
+        if market and pos["market"] != market:
+            continue
+        # Filter by symbol
+        if symbol and pos["symbol"] != symbol:
+            continue
+        # Filter by direction
+        if direction and pos["direction"] != direction:
+            continue
+        # Filter by status
+        if status == "open" and pos["close_time"] is not None:
+            continue
+        elif status == "closed" and pos["close_time"] is None:
+            continue
+
+        all_positions.append(pos)
+
+    # Sort
+    reverse = order == "desc"
+    all_positions.sort(key=lambda x: x[sort], reverse=reverse)
+
+    # Paginate
+    total = len(all_positions)
+    data = all_positions[offset:offset + limit]
+
     return {"total": total, "limit": limit, "offset": offset, "positions": data}
 
 
@@ -210,60 +242,44 @@ def position_klines(pid: int, interval: str = None):
 # ─── /api/analytics ──────────────────────────────────────────────────────────────
 @app.get("/api/analytics", dependencies=[Depends(auth)])
 def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
-    closed = "exchange=%s AND market=%s AND close_time IS NOT NULL"
-    args = (EXCHANGE, market)
-    daily = rows(
-        f"SELECT (close_time/86400000)*86400000 AS day_ms, SUM(realized_pnl) pnl "
-        f"FROM positions WHERE {closed} GROUP BY day_ms ORDER BY day_ms", args)
-    pnls = [float(d["pnl"] or 0) for d in daily]
-    cum = cumsum(pnls)
-    peak, dd = 0.0, []
-    for c in cum:
-        peak = max(peak, c)
-        dd.append(round(c - peak, 8))
-    equity = [{"t": int(d["day_ms"]), "cum": c, "drawdown": ddv}
-              for d, c, ddv in zip(daily, cum, dd)]
+    # MOCK 數據用於前端驗證
+    import datetime
+    import random
+    random.seed(42)  # 固定種子
+    base_date = datetime.datetime(2026, 1, 1)
+    equity = []
+    cum_pnl = 1500.0
+    peak = 1500.0
+    trend = 35.0  # 平緩上升趨勢
+    for i in range(60):
+        # 趨勢 + 隨機波動
+        daily_pnl = trend + random.uniform(-80, 100)
+        cum_pnl += daily_pnl
+        peak = max(peak, cum_pnl)
+        equity.append({
+            "t": int((base_date + datetime.timedelta(days=i)).timestamp() * 1000),
+            "cum": round(cum_pnl, 2),
+            "drawdown": round(cum_pnl - peak, 2)
+        })
 
-    agg = one(
-        f"SELECT COUNT(*) total, "
-        f"COUNT(*) FILTER (WHERE realized_pnl>0) wins, "
-        f"COUNT(*) FILTER (WHERE realized_pnl<0) losses, "
-        f"COUNT(*) FILTER (WHERE direction='Long') longs, "
-        f"COUNT(*) FILTER (WHERE direction='Short') shorts, "
-        f"COALESCE(SUM(realized_pnl),0) total_pnl, "
-        f"COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl>0),0) avg_win, "
-        f"COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl<0),0) avg_loss, "
-        f"COALESCE(AVG(hold_ms),0) avg_hold_ms "
-        f"FROM positions WHERE {closed}", args) or {}
-    wins, losses = agg.get("wins", 0), agg.get("losses", 0)
-    decided = wins + losses
-    win_rate = round(wins / decided * 100, 2) if decided else 0.0
-    avg_win = float(agg.get("avg_win", 0) or 0)
-    avg_loss = float(agg.get("avg_loss", 0) or 0)
-    p_win = wins / decided if decided else 0
-    # 期望值（每笔）= p_win*avg_win + p_loss*avg_loss
-    expectancy = round(p_win * avg_win + (1 - p_win) * avg_loss, 4)
-    ndays = len(daily)
     return {
         "market": market,
         "equity_curve": equity,
-        "expectancy_donut": {"wins": wins, "losses": losses, "win_rate": win_rate},
+        "expectancy_donut": {"wins": 98, "losses": 58, "win_rate": 62.8},
         "long_short": {
-            "longs": agg.get("longs", 0), "shorts": agg.get("shorts", 0),
-            "long_pct": round(agg.get("longs", 0) /
-                              max(agg.get("total", 1), 1) * 100, 2),
+            "longs": 89, "shorts": 67,
+            "long_pct": 57.05,
         },
         "statistics": {
-            "total_gain_loss": round(float(agg.get("total_pnl", 0) or 0), 4),
-            "trade_expectancy": expectancy,
-            "avg_daily_gain": round(float(agg.get("total_pnl", 0) or 0) / ndays, 4)
-                              if ndays else 0.0,
-            "avg_hold_ms": int(agg.get("avg_hold_ms", 0) or 0),
-            "avg_win": round(avg_win, 4),
-            "avg_loss": round(avg_loss, 4),
+            "total_gain_loss": 4500.50,
+            "trade_expectancy": 28.64,
+            "avg_daily_gain": 75.01,
+            "avg_hold_ms": 86400000,
+            "avg_win": 125.50,
+            "avg_loss": -95.25,
         },
         "pnl_asset": "USDT" if market != "coinm" else "coin",
-        "note": "统计基于已平仓持仓；coinm 为币本位不可跨 symbol 相加。",
+        "note": "MOCK 數據用於前端驗證",
     }
 
 
@@ -320,27 +336,83 @@ def reports(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
 # ─── /api/symbols ────────────────────────────────────────────────────────────────
 @app.get("/api/symbols", dependencies=[Depends(auth)])
 def symbols(market: str = Query(None, pattern="^(spot|usdm|coinm)$")):
-    where = ["exchange=%s", "close_time IS NOT NULL"]
-    args = [EXCHANGE]
+    # MOCK 數據用於前端驗證
+    mock_symbols = [
+        {
+            "market": "usdm",
+            "symbol": "BTCUSDT",
+            "trades": 28,
+            "wins": 18,
+            "longs": 15,
+            "shorts": 13,
+            "total_gain": 2850.50,
+            "win_rate": 64.29,
+            "avg_hold_ms": 86400000,
+            "pnl_asset": "USDT",
+            "is_estimated": False,
+        },
+        {
+            "market": "usdm",
+            "symbol": "ETHUSDT",
+            "trades": 32,
+            "wins": 19,
+            "longs": 18,
+            "shorts": 14,
+            "total_gain": 1950.75,
+            "win_rate": 59.38,
+            "avg_hold_ms": 72000000,
+            "pnl_asset": "USDT",
+            "is_estimated": False,
+        },
+        {
+            "market": "usdm",
+            "symbol": "BNBUSDT",
+            "trades": 24,
+            "wins": 16,
+            "longs": 12,
+            "shorts": 12,
+            "total_gain": 1200.25,
+            "win_rate": 66.67,
+            "avg_hold_ms": 108000000,
+            "pnl_asset": "USDT",
+            "is_estimated": False,
+        },
+        {
+            "market": "coinm",
+            "symbol": "ADAUSDT",
+            "trades": 45,
+            "wins": 26,
+            "longs": 22,
+            "shorts": 23,
+            "total_gain": 450.50,
+            "win_rate": 57.78,
+            "avg_hold_ms": 54000000,
+            "pnl_asset": "USDT",
+            "is_estimated": False,
+        },
+        {
+            "market": "spot",
+            "symbol": "XRPUSDT",
+            "trades": 27,
+            "wins": 19,
+            "longs": 27,
+            "shorts": 0,
+            "total_gain": 550.75,
+            "win_rate": 70.37,
+            "avg_hold_ms": 180000000,
+            "pnl_asset": "USDT",
+            "is_estimated": False,
+        },
+    ]
+
+    # Filter by market
     if market:
-        where.append("market=%s"); args.append(market)
-    wsql = " AND ".join(where)
-    data = rows(
-        f"SELECT market, symbol, COUNT(*) trades, "
-        f"COUNT(*) FILTER (WHERE realized_pnl>0) wins, "
-        f"COUNT(*) FILTER (WHERE direction='Long') longs, "
-        f"COUNT(*) FILTER (WHERE direction='Short') shorts, "
-        f"COALESCE(SUM(realized_pnl),0) total_gain, "
-        f"COALESCE(AVG(hold_ms),0) avg_hold_ms, "
-        f"MAX(pnl_asset) pnl_asset, BOOL_OR(is_estimated) is_estimated "
-        f"FROM positions WHERE {wsql} GROUP BY market, symbol "
-        f"ORDER BY trades DESC", tuple(args))
-    for d in data:
-        dec = d["trades"]
-        d["win_rate"] = round((d["wins"] or 0) / dec * 100, 2) if dec else 0.0
-        d["total_gain"] = round(float(d["total_gain"] or 0), 4)
-        d["avg_hold_ms"] = int(d["avg_hold_ms"] or 0)
-    return {"symbols": data}
+        mock_symbols = [s for s in mock_symbols if s["market"] == market]
+
+    # Sort by trades descending
+    mock_symbols.sort(key=lambda x: x["trades"], reverse=True)
+
+    return {"symbols": mock_symbols}
 
 
 @app.get("/api/health")
