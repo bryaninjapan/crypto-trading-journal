@@ -65,19 +65,49 @@ export interface Summary {
 
 export interface Analytics {
   market: Market;
-  equity_curve: { t: number; cum: number; drawdown: number }[];
-  expectancy_donut: { wins: number; losses: number; win_rate: number };
-  long_short: { longs: number; shorts: number; long_pct: number };
+  kpi: {
+    total_trades: number;
+    avg_hold_ms: number;
+    win_rate: number;
+    longs: number;
+    shorts: number;
+    long_pct: number;
+  };
   statistics: {
     total_gain_loss: number;
     trade_expectancy: number;
     avg_daily_gain: number;
-    avg_hold_ms: number;
+    avg_daily_volume: number;
+    largest_gain: number;
+    total_trades_volume: number;
+    avg_trades_per_day: number;
+    avg_trade_win: number;
+    avg_trade_loss: number;
+    max_consecutive_win: number;
+    max_consecutive_loss: number;
+    largest_losses: number;
+  };
+  longs: {
+    count: number;
+    win_ratio: number;
+    wins: number;
+    losses: number;
+    avg_duration_ms: number;
+    total_realized_pnl: number;
     avg_win: number;
     avg_loss: number;
   };
-  pnl_asset: string;
-  note: string;
+  shorts: {
+    count: number;
+    win_ratio: number;
+    wins: number;
+    losses: number;
+    avg_duration_ms: number;
+    total_realized_pnl: number;
+    avg_win: number;
+    avg_loss: number;
+  };
+  equity_curve?: { t: number; cum: number; drawdown: number }[];
 }
 
 export interface SymbolRow {

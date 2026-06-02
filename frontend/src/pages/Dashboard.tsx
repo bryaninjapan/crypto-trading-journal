@@ -55,7 +55,7 @@ export function Dashboard() {
             valueClass={data.kpi.win_rate > 50 ? "text-bullish" : "text-bearish"}
           />
           <KpiCard label="Total Trades" value={fmtNum(data.kpi.total_positions, 0)} />
-          <KpiCard label="Avg Hold" value={fmtDuration(ana.statistics?.avg_hold_ms ?? 0)} />
+          <KpiCard label="Avg Hold" value={fmtDuration(ana.kpi?.avg_hold_ms ?? 0)} />
         </div>
       </div>
 
