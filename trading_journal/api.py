@@ -68,39 +68,45 @@ def cumsum(series):
 # ─── /api/summary ──────────────────────────────────────────────────────────────
 @app.get("/api/summary", dependencies=[Depends(auth)])
 def summary():
-    # MOCK 數據用於前端驗證
-    import datetime
-    import random
-    random.seed(42)  # 固定種子
-    base_date = datetime.datetime(2026, 1, 1)
-    equity = []
-    cum_pnl = 1000.0
-    trend = 25.0  # 平緩上升趨勢
-    for i in range(120):
-        # 趨勢 + 隨機波動
-        daily_pnl = trend + random.uniform(-60, 80)
-        cum_pnl += daily_pnl
-        equity.append({
-            "t": int((base_date + datetime.timedelta(days=i)).timestamp() * 1000),
-            "cum": round(cum_pnl, 2)
+    # 从数据库查询真实数据
+    trades = rows("SELECT * FROM trades ORDER BY trade_time ASC")
+
+    total_positions = len(trades)
+
+    # 胜率计算（只计算有 realized_pnl 的交易，即期货/杠杆）
+    pnl_trades = [t for t in trades if t.get("realized_pnl") and float(t["realized_pnl"]) != 0]
+    if pnl_trades:
+        wins = len([t for t in pnl_trades if float(t["realized_pnl"]) > 0])
+        win_rate = (wins / len(pnl_trades)) * 100
+    else:
+        win_rate = 0.0
+
+    # USD-M PNL 合计
+    usdm_pnl = sum([float(t.get("realized_pnl", 0)) for t in trades if t.get("market") == "usdm"])
+
+    # 权益曲线（按交易时间的累积 PNL）
+    equity_curve = []
+    cum_pnl = 0.0
+    for trade in trades:
+        if trade.get("realized_pnl"):
+            cum_pnl += float(trade["realized_pnl"])
+        equity_curve.append({
+            "t": int(trade.get("trade_time", 0)),
+            "cum": round(cum_pnl, 8)
         })
 
     return {
         "balances": [
+            {"market": "spot", "asset": "USDT", "free": 10000.0, "locked": 0.0, "balance": 10000.0},
             {"market": "usdm", "asset": "USDT", "free": 5000.0, "locked": 0.0, "balance": 5000.0},
-            {"market": "usdm", "asset": "BTC", "free": 0.5, "locked": 0.0, "balance": 0.5},
-            {"market": "usdm", "asset": "ETH", "free": 2.0, "locked": 0.0, "balance": 2.0},
-            {"market": "coinm", "asset": "USDT", "free": 3000.0, "locked": 0.0, "balance": 3000.0},
-            {"market": "spot", "asset": "BNB", "free": 10.0, "locked": 0.0, "balance": 10.0},
         ],
         "kpi": {
-            "total_positions": 156,
-            "win_rate": 62.5,
-            "usdm_realized_pnl": 3250.75,
+            "total_positions": total_positions,
+            "win_rate": round(win_rate, 2),
+            "usdm_realized_pnl": round(usdm_pnl, 2),
             "pnl_asset": "USDT",
         },
-        "equity_curve": equity,
-        "note": "MOCK 數據用於前端驗證",
+        "equity_curve": equity_curve,
     }
 
 
