@@ -129,70 +129,64 @@ def _build_one_position(market, symbol, pos_side, fills):
 def build_positions_from_fills(fills):
     """
     將 fills 按 (market, symbol) 分組，
-    再用方向偵測狀態機切割成一個個 position cycle。
+    再用最簡單的狀態機：累積 qty 為 0 時即為 cycle 邊界。
 
-    新算法：追蹤累積方向（net qty 的符號）
-    - BUY 群 (cum_qty > 0) = LONG 部分
-    - SELL 群 (cum_qty < 0) = SHORT 部分
-    - 當方向改變（LONG → SHORT 或 SHORT → LONG）時，一個 cycle 完成
+    核心算法：
+    - BUY = +qty, SELL = -qty
+    - 累積 cum_qty，當 cum_qty 接近 0（|cum_qty| < tolerance）時，cycle 完成
+    - 即使 cum_qty 跨越 0（短暫變反向），也在通過 0 時截斷
     """
     from collections import defaultdict
 
-    # 先按 (market, symbol) 分組，不按 position_side
     groups = defaultdict(list)
     for f in fills:
-        if not f.get("position_side"):  # spot 無 position_side，跳過
+        if not f.get("position_side"):
             continue
         key = (f.get("market"), f.get("symbol"))
         groups[key].append(f)
 
     positions = []
+    TOLERANCE = 1e-3  # cum_qty 接近 0 的閾值（0.001 = tolerance for micro-positions）
+
     for (market, symbol), group_fills in groups.items():
         group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
 
-        # 狀態機：追蹤累積方向和方向變化
         cycle_fills = []
-        cum_qty     = 0.0
-        curr_direction = None  # None, "LONG" (cum_qty > 0), or "SHORT" (cum_qty < 0)
+        cum_qty = 0.0
 
         for f in group_fills:
-            side = f.get("side")  # "BUY" or "SELL"
+            side = f.get("side")
             qty = float(f.get("qty_base", 0))
-
-            # 計算本次操作後的 signed qty
             delta = qty if side == "BUY" else -qty
-            new_cum_qty = cum_qty + delta
 
-            # 判斷新方向
-            if new_cum_qty > 1e-8:
-                new_direction = "LONG"
-            elif new_cum_qty < -1e-8:
-                new_direction = "SHORT"
-            else:
-                new_direction = None  # 平衡（接近 0）
+            prev_cum = cum_qty
+            cum_qty += delta
 
-            # 檢測方向是否改變（及時結束 cycle）
-            direction_changed = (
-                curr_direction is not None and
-                new_direction is not None and
-                curr_direction != new_direction
-            )
+            # 檢測：(1) cum_qty 跨越 0，或 (2) cum_qty 回到平衡狀態
+            crossed_zero = (prev_cum * cum_qty < 0)  # 符號改變 = 跨越 0
+            is_balanced = (abs(cum_qty) < TOLERANCE)
 
-            if direction_changed and cycle_fills:
-                # 結束上一個 cycle
-                inferred_pos_side = curr_direction
+            if (crossed_zero or is_balanced) and cycle_fills:
+                # 結束當前 cycle
+                if cycle_fills[0].get("side") == "BUY":
+                    inferred_pos_side = "LONG"
+                else:
+                    inferred_pos_side = "SHORT"
                 positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
                 cycle_fills = []
+                # 如果平衡，重置狀態
+                if is_balanced:
+                    cum_qty = 0.0
 
-            # 加入當前 fill 到 cycle
+            # 加入當前 fill
             cycle_fills.append(f)
-            cum_qty = new_cum_qty
-            if new_direction is not None:
-                curr_direction = new_direction
 
-        # 殘餘 fills = 尚未平倉的 open position
+        # 殘餘
         if cycle_fills:
-            inferred_pos_side = curr_direction or "LONG"
+            if cycle_fills[0].get("side") == "BUY":
+                inferred_pos_side = "LONG"
+            else:
+                inferred_pos_side = "SHORT"
             positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
 
     return positions
