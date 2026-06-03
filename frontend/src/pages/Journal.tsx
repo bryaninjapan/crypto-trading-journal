@@ -5,9 +5,8 @@ import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
 import { Pagination } from "../components/Pagination";
 import { TradeRow } from "../components/TradeRow";
-import { MarketBadge, EstimatedBadge } from "../components/Badge";
+import { MarketBadge } from "../components/Badge";
 import { Loading, ErrorBlock, Empty } from "../components/StateBlock";
-import { fmtPnl, fmtNum, fmtDuration, pnlClass } from "../lib/format";
 
 const MARKETS = ["", "usdm", "coinm", "spot"];
 

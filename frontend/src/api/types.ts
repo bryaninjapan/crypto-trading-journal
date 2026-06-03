@@ -49,6 +49,7 @@ export interface Balance {
   free: number | null;
   locked: number | null;
   balance: number | null;
+  usd_value?: number | null;
 }
 
 export interface Summary {
@@ -56,7 +57,7 @@ export interface Summary {
   kpi: {
     total_positions: number;
     win_rate: number;
-    usdm_realized_pnl: number;
+    futures_realized_pnl: number;
     pnl_asset: string;
   };
   equity_curve: { t: number; cum: number }[];
