@@ -12,7 +12,8 @@ from psycopg2.extras import execute_batch
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
-ENV_FILE = "/home/ubuntu/trading-journal/.env"
+# 支持本地和 VM 环境
+ENV_FILE = ".env" if os.path.exists(".env") else "/home/ubuntu/trading-journal/.env"
 
 def load_env():
     """读取 .env 文件（不用 load_dotenv，避免环境污染）"""
