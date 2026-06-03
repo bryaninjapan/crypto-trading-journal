@@ -53,7 +53,6 @@ export const pnlClass = (n: number | null | undefined) =>
       : "text-bearish glow-bearish";
 
 export const MARKET_LABEL: Record<string, string> = {
-  spot: "SPOT",
   usdm: "USD-M",
   coinm: "COIN-M",
 };

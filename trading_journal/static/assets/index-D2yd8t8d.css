@@ -776,9 +776,6 @@ video {
 .bg-primary\/20 {
   background-color: rgb(192 193 255 / 0.2);
 }
-.bg-secondary\/10 {
-  background-color: rgb(123 208 255 / 0.1);
-}
 .bg-surface-container {
   --tw-bg-opacity: 1;
   background-color: rgb(28 31 41 / var(--tw-bg-opacity, 1));
@@ -951,10 +948,6 @@ video {
 .text-primary {
   --tw-text-opacity: 1;
   color: rgb(192 193 255 / var(--tw-text-opacity, 1));
-}
-.text-secondary {
-  --tw-text-opacity: 1;
-  color: rgb(123 208 255 / var(--tw-text-opacity, 1));
 }
 .text-tertiary {
   --tw-text-opacity: 1;

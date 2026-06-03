@@ -6,7 +6,7 @@ import { PlotlyChart } from "../components/charts/PlotlyChart";
 import { Loading, ErrorBlock } from "../components/StateBlock";
 import { fmtPnl, fmtNum, fmtDuration, pnlClass } from "../lib/format";
 
-type Market = "usdm" | "coinm" | "spot";
+type Market = "usdm" | "coinm";
 
 export function Analytics() {
   const [market, setMarket] = useState<Market>("usdm");

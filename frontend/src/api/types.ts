@@ -1,4 +1,4 @@
-export type Market = "spot" | "usdm" | "coinm";
+export type Market = "usdm" | "coinm";
 export type Direction = "Long" | "Short";
 
 export interface Position {

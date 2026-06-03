@@ -105858,7 +105858,6 @@ function fmtTime(ms) {
 }
 const pnlClass = (n2) => n2 === null || n2 === void 0 || n2 === 0 ? "text-on-surface-variant" : n2 > 0 ? "text-bullish glow-bullish" : "text-bearish glow-bearish";
 const MARKET_LABEL = {
-  spot: "SPOT",
   usdm: "USD-M",
   coinm: "COIN-M"
 };
@@ -106087,8 +106086,7 @@ function DirectionBadge({ direction }) {
 function MarketBadge({ market }) {
   const color = {
     usdm: "bg-primary/10 text-primary",
-    coinm: "bg-tertiary/10 text-tertiary",
-    spot: "bg-secondary/10 text-secondary"
+    coinm: "bg-tertiary/10 text-tertiary"
   };
   return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `pill ${color[market]}`, children: MARKET_LABEL[market] });
 }

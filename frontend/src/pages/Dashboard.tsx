@@ -8,7 +8,7 @@ import { PlotlyChart } from "../components/charts/PlotlyChart";
 import { Loading, ErrorBlock } from "../components/StateBlock";
 import { fmtNum, fmtPnl, fmtDuration, pnlClass, MARKET_LABEL } from "../lib/format";
 
-type Market = "spot" | "usdm" | "coinm";
+type Market = "usdm" | "coinm";
 
 export function Dashboard() {
   const [balanceMarket, setBalanceMarket] = useState<Market | "">("usdm");
