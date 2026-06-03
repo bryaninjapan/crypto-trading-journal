@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import Plotly from "plotly.js-dist-min";
+
+// Use global Plotly from CDN (loaded in index.html)
+const Plotly = (window as any).Plotly;
 
 type Trace = Record<string, unknown>;
 type Layout = Record<string, unknown>;
@@ -34,13 +36,17 @@ export function PlotlyChart({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
-    Plotly.react(
-      ref.current,
-      data,
-      { ...DARK_LAYOUT, ...layout, height },
-      { displayModeBar: false, responsive: true },
-    );
+    if (!ref.current || !Plotly) return;
+    try {
+      Plotly.react(
+        ref.current,
+        data,
+        { ...DARK_LAYOUT, ...layout, height },
+        { displayModeBar: false, responsive: true },
+      );
+    } catch (e) {
+      console.error("Plotly rendering error:", e);
+    }
   }, [data, layout, height]);
 
   useEffect(() => {

@@ -3,8 +3,8 @@ import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
 import { KpiCard } from "../components/KpiCard";
-import { BalanceDonut } from "../components/charts/BalanceDonut";
-import { PlotlyChart } from "../components/charts/PlotlyChart";
+// import { BalanceDonut } from "../components/charts/BalanceDonut";
+// import { PlotlyChart } from "../components/charts/PlotlyChart";
 import { Loading, ErrorBlock } from "../components/StateBlock";
 import { fmtNum, fmtPnl, fmtDuration, pnlClass, MARKET_LABEL } from "../lib/format";
 
@@ -16,14 +16,13 @@ export function Dashboard() {
   const summary = useApi(() => api.summary(), []);
   const analytics = useApi(() => api.analytics("usdm"), []);
 
-  if (summary.loading || analytics.loading) return <Loading />;
   if (summary.error || analytics.error) return <ErrorBlock error={(summary.error ?? analytics.error)!} />;
-  if (!summary.data || !analytics.data) return null;
+  if (summary.loading || analytics.loading || !summary.data || !analytics.data) return <Loading />;
 
   const data = summary.data;
   const ana = analytics.data;
   const pnl = data.kpi.futures_realized_pnl;
-  const curve = data.equity_curve;
+  // const curve = data.equity_curve;
 
   // 按市場分組餘額
   const byMarket: Record<string, typeof data.balances> = {};
@@ -38,12 +37,10 @@ export function Dashboard() {
 
       {/* 頂部 Stat Cards + Donut */}
       <div className="grid grid-cols-1 gap-md md:grid-cols-[1fr_2fr]">
-        {/* 左側：Donut */}
+        {/* 左側：Donut - Temporarily disabled */}
         <GlassCard className="!p-md">
           <span className="text-label-caps uppercase text-on-surface-variant">Total Balance</span>
-          <div className="mt-2">
-            <BalanceDonut balances={data.balances} />
-          </div>
+          <div className="mt-2 text-sm text-on-surface-variant">Chart loading...</div>
         </GlassCard>
 
         {/* 右側：2x2 Stat Cards */}
@@ -59,27 +56,14 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* PNL 圖 */}
+      {/* PNL 圖 - Temporarily disabled */}
       <GlassCard noOverflow>
         <div className="flex items-center justify-between mb-2">
           <span className="font-sans text-headline-md font-bold">Equity Curve</span>
         </div>
-        {curve.length > 0 && (
-          <PlotlyChart
-            height={300}
-            data={[
-              {
-                x: curve.map((p) => new Date(p.t)),
-                y: curve.map((p) => p.cum),
-                type: "scatter",
-                mode: "lines",
-                fill: "tozeroy",
-                line: { color: "#7bd0ff", width: 2, shape: "spline" },
-                fillcolor: "rgba(123,208,255,0.08)",
-              },
-            ]}
-          />
-        )}
+        <div className="h-[300px] flex items-center justify-center text-on-surface-variant">
+          Chart disabled for debugging...
+        </div>
       </GlassCard>
 
       {/* Balances 表格 */}

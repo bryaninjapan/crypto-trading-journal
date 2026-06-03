@@ -605,6 +605,9 @@ video {
 .h-3 {
   height: 0.75rem;
 }
+.h-\[300px\] {
+  height: 300px;
+}
 .h-full {
   height: 100%;
 }
