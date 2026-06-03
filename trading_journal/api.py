@@ -364,7 +364,7 @@ def position_detail(trade_id: int):
         target_fills = [anchor]
     else:
         # 重新聚合以找出這個 position 對應的 fills
-        # （build_positions_from_fills 本身會分割，我們只保留包含 trade_id 的那組）
+        # 使用與 build_positions_from_fills 相同的狀態機邏輯
         from collections import defaultdict
         groups = defaultdict(list)
         for f in same_symbol:
@@ -372,45 +372,39 @@ def position_detail(trade_id: int):
             groups[key].append(f)
 
         target_fills = []
+        TOLERANCE = 1e-3  # 與 build_positions_from_fills 保持一致
+
         for (market, symbol), group_fills in groups.items():
             if market == anchor["market"] and symbol == anchor["symbol"]:
                 group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
 
-                # 重新執行狀態機，追蹤累積方向和 fills
+                # 重新執行狀態機（與 build_positions_from_fills 邏輯一致）
                 cycle_fills = []
                 cum_qty = 0.0
-                curr_direction = None
 
                 for f in group_fills:
                     side = f.get("side")
                     qty = float(f.get("qty_base", 0))
                     delta = qty if side == "BUY" else -qty
-                    new_cum_qty = cum_qty + delta
 
-                    if new_cum_qty > 1e-8:
-                        new_direction = "LONG"
-                    elif new_cum_qty < -1e-8:
-                        new_direction = "SHORT"
-                    else:
-                        new_direction = None
+                    prev_cum = cum_qty
+                    cum_qty += delta
 
-                    direction_changed = (
-                        curr_direction is not None and
-                        new_direction is not None and
-                        curr_direction != new_direction
-                    )
+                    # 檢測：(1) cum_qty 跨越 0，或 (2) cum_qty 回到平衡狀態
+                    crossed_zero = (prev_cum * cum_qty < 0)
+                    is_balanced = (abs(cum_qty) < TOLERANCE)
 
-                    if direction_changed and cycle_fills:
-                        # 檢查這個 cycle 是否包含 trade_id
+                    if (crossed_zero or is_balanced) and cycle_fills:
+                        # 結束當前 cycle，檢查是否包含 trade_id
                         if any(cf["trade_id"] == trade_id for cf in cycle_fills):
                             target_fills = cycle_fills
                             break
                         cycle_fills = []
+                        # 如果平衡，重置狀態
+                        if is_balanced:
+                            cum_qty = 0.0
 
                     cycle_fills.append(f)
-                    cum_qty = new_cum_qty
-                    if new_direction is not None:
-                        curr_direction = new_direction
 
                 # 如果還沒找到，檢查最後一個 cycle
                 if not target_fills and cycle_fills:
