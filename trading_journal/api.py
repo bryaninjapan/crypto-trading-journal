@@ -95,11 +95,56 @@ def summary():
             "cum": round(cum_pnl, 8)
         })
 
+    # 从 Binance API 查询真实余额
+    from binance.client import Client
+    try:
+        client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
+        balances = []
+
+        # 现货
+        spot_acc = client.get_account()
+        for b in spot_acc.get("balances", []):
+            free = float(b.get("free", 0))
+            locked = float(b.get("locked", 0))
+            if free + locked > 0:
+                balances.append({
+                    "market": "spot",
+                    "asset": b["asset"],
+                    "free": free,
+                    "locked": locked,
+                    "balance": free + locked,
+                })
+
+        # USDM
+        for b in client.futures_account_balance():
+            balance = float(b.get("balance", 0))
+            if balance > 0:
+                balances.append({
+                    "market": "usdm",
+                    "asset": b["asset"],
+                    "free": balance,
+                    "locked": 0.0,
+                    "balance": balance,
+                })
+
+        # COINM
+        for b in client.futures_coin_account_balance():
+            balance = float(b.get("balance", 0))
+            if balance > 0:
+                balances.append({
+                    "market": "coinm",
+                    "asset": b["asset"],
+                    "free": balance,
+                    "locked": 0.0,
+                    "balance": balance,
+                })
+    except Exception as e:
+        # 如果 API 失败，返回空列表
+        print(f"[warning] 无法从 Binance 查询余额: {e}")
+        balances = []
+
     return {
-        "balances": [
-            {"market": "spot", "asset": "USDT", "free": 10000.0, "locked": 0.0, "balance": 10000.0},
-            {"market": "usdm", "asset": "USDT", "free": 5000.0, "locked": 0.0, "balance": 5000.0},
-        ],
+        "balances": balances,
         "kpi": {
             "total_positions": total_positions,
             "win_rate": round(win_rate, 2),
