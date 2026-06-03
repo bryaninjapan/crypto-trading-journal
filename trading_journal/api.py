@@ -497,18 +497,18 @@ def symbols(market: str = Query(None, pattern="^(spot|usdm|coinm)$")):
     # 从数据库查询实际交易过的符号（动态）
     if market:
         trades = rows(
-            "SELECT DISTINCT symbol, market, COUNT(*) as count FROM trades WHERE market = %s GROUP BY symbol ORDER BY count DESC",
+            "SELECT symbol, market, COUNT(*) as trade_count FROM trades WHERE market = %s GROUP BY symbol, market ORDER BY trade_count DESC",
             (market,)
         )
     else:
         trades = rows(
-            "SELECT DISTINCT symbol, market, COUNT(*) as count FROM trades GROUP BY symbol ORDER BY count DESC"
+            "SELECT symbol, market, COUNT(*) as trade_count FROM trades GROUP BY symbol, market ORDER BY trade_count DESC"
         )
 
     # 转换格式供前端消费
     return {
         "symbols": [
-            {"symbol": t["symbol"], "market": t["market"], "trades": t["count"]}
+            {"symbol": t["symbol"], "market": t["market"], "trades": t["trade_count"]}
             for t in trades
         ]
     }
