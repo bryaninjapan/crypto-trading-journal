@@ -166,6 +166,10 @@ def build_positions_from_fills(fills):
             crossed_zero = (prev_cum * cum_qty < 0)  # 符號改變 = 跨越 0
             is_balanced = (abs(cum_qty) < TOLERANCE)
 
+            # 總是先加入當前 fill
+            cycle_fills.append(f)
+
+            # 然後檢測是否要結束 cycle（當前 fill 已包含）
             if (crossed_zero or is_balanced) and cycle_fills:
                 # 結束當前 cycle
                 if cycle_fills[0].get("side") == "BUY":
@@ -177,9 +181,6 @@ def build_positions_from_fills(fills):
                 # 如果平衡，重置狀態
                 if is_balanced:
                     cum_qty = 0.0
-
-            # 加入當前 fill
-            cycle_fills.append(f)
 
         # 殘餘
         if cycle_fills:
@@ -394,6 +395,10 @@ def position_detail(trade_id: int):
                     crossed_zero = (prev_cum * cum_qty < 0)
                     is_balanced = (abs(cum_qty) < TOLERANCE)
 
+                    # 總是先加入當前 fill
+                    cycle_fills.append(f)
+
+                    # 然後檢測是否要結束 cycle
                     if (crossed_zero or is_balanced) and cycle_fills:
                         # 結束當前 cycle，檢查是否包含 trade_id
                         if any(cf["trade_id"] == trade_id for cf in cycle_fills):
@@ -403,8 +408,6 @@ def position_detail(trade_id: int):
                         # 如果平衡，重置狀態
                         if is_balanced:
                             cum_qty = 0.0
-
-                    cycle_fills.append(f)
 
                 # 如果還沒找到，檢查最後一個 cycle
                 if not target_fills and cycle_fills:
