@@ -105926,7 +105926,7 @@ function Dashboard() {
   if (!summary.data || !analytics.data) return null;
   const data = summary.data;
   const ana = analytics.data;
-  const pnl = data.kpi.usdm_realized_pnl;
+  const pnl = data.kpi.futures_realized_pnl;
   const curve = data.equity_curve;
   const byMarket = {};
   for (const b of data.balances) (byMarket[_a = b.market] ?? (byMarket[_a] = [])).push(b);
@@ -105975,7 +105975,7 @@ function Dashboard() {
     /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-0 overflow-hidden", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "border-b border-white/[0.08] px-lg py-md", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Balances" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1", children: ["usdm", "coinm", "spot"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1", children: ["usdm", "coinm"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
             onClick: () => setBalanceMarket(m2),
@@ -106011,7 +106011,7 @@ function Dashboard() {
                 "%"
               ] })
             ] }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-lg py-2 text-right text-on-surface-variant", children: "—" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-lg py-2 text-right text-on-surface-variant", children: b.usd_value ? fmtNum(b.usd_value, 2) : "—" })
           ] }, b.asset || "unknown");
         }) })
       ] }) })
@@ -106092,9 +106092,6 @@ function MarketBadge({ market }) {
   };
   return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `pill ${color[market]}`, children: MARKET_LABEL[market] });
 }
-function EstimatedBadge() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "pill bg-white/5 text-on-surface-variant", title: "现货 FIFO 估算，非交易所口径", children: "EST" });
-}
 function TradeRow({ position, rowNum }) {
   const nav = useNavigate();
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
@@ -106125,7 +106122,7 @@ function TradeRow({ position, rowNum }) {
     }
   );
 }
-const MARKETS = ["", "usdm", "coinm", "spot"];
+const MARKETS = ["", "usdm", "coinm"];
 function Journal() {
   var _a, _b;
   const nav = useNavigate();
@@ -106157,41 +106154,16 @@ function Journal() {
         {
           hover: true,
           className: "!p-md cursor-pointer",
-          onClick: () => nav(`/journal?symbol=${s.symbol}`),
+          onClick: () => nav(`/positions/${s.symbol}`),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-body-bold font-semibold", children: s.symbol }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx(MarketBadge, { market: s.market }),
-                s.is_estimated && /* @__PURE__ */ jsxRuntimeExports.jsx(EstimatedBadge, {})
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `font-mono text-body-bold ${pnlClass(s.total_gain)}`, children: fmtPnl(s.total_gain, s.pnl_asset || "USDT") })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid grid-cols-4 gap-2 font-mono text-data-mono text-on-surface-variant", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] uppercase", children: "Trades" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface", children: s.trades })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] uppercase", children: "Win" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-on-surface", children: [
-                  fmtNum(s.win_rate),
-                  "%"
-                ] })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] uppercase", children: "L / S" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-on-surface", children: [
-                  s.longs,
-                  "/",
-                  s.shorts
-                ] })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] uppercase", children: "Avg Hold" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface", children: fmtDuration(s.avg_hold_ms) })
-              ] })
-            ] })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-between", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-body-bold font-semibold", children: s.symbol }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(MarketBadge, { market: s.market })
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 font-mono text-data-mono text-on-surface-variant", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] uppercase", children: "Trades: " }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-on-surface", children: s.trades })
+            ] }) })
           ]
         },
         `${s.market}-${s.symbol}`
@@ -106383,12 +106355,12 @@ function Analytics() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-lg", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "font-sans text-headline-md font-bold", children: "Analytics" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1", children: ["usdm", "coinm", "spot"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1", children: ["usdm", "coinm"].map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
           onClick: () => setMarket(m2),
           className: `rounded-full px-3 py-1 text-data-mono text-xs transition-colors ${market === m2 ? "bg-primary/20 text-primary" : "text-on-surface-variant"}`,
-          children: m2 === "usdm" ? "USD-M" : m2 === "coinm" ? "COIN-M" : "Spot"
+          children: m2 === "usdm" ? "USD-M" : "COIN-M"
         },
         m2
       )) })

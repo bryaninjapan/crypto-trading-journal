@@ -27,7 +27,7 @@ export function Analytics() {
       <div className="flex items-center justify-between">
         <h1 className="font-sans text-headline-md font-bold">Analytics</h1>
         <div className="flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1">
-          {["usdm", "coinm", "spot"].map((m) => (
+          {["usdm", "coinm"].map((m) => (
             <button
               key={m}
               onClick={() => setMarket(m as Market)}
@@ -35,7 +35,7 @@ export function Analytics() {
                 market === m ? "bg-primary/20 text-primary" : "text-on-surface-variant"
               }`}
             >
-              {m === "usdm" ? "USD-M" : m === "coinm" ? "COIN-M" : "Spot"}
+              {m === "usdm" ? "USD-M" : "COIN-M"}
             </button>
           ))}
         </div>

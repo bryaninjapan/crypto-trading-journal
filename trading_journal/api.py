@@ -105,38 +105,6 @@ def summary():
         client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
         balances = []
 
-        # 获取 ticker prices（用于灰尘过滤）
-        try:
-            all_tickers = client.get_all_tickers()
-            prices = {p["symbol"]: float(p["price"]) for p in all_tickers}
-        except Exception as e:
-            print(f"[warn] 无法取 ticker prices: {e}")
-            prices = {}
-
-        # 现货（含灰尘过滤）
-        spot_acc = client.get_account()
-        for b in spot_acc.get("balances", []):
-            free = float(b.get("free", 0))
-            locked = float(b.get("locked", 0))
-            balance = free + locked
-
-            if balance > 0:
-                # 计算 USD value（用于灰尘过滤）
-                symbol = f"{b['asset']}USDT"
-                price = prices.get(symbol, 0)
-                usd_value = balance * price
-
-                # ✅ 灰尘过滤：USD value >= 0.10
-                if usd_value >= 0.10:
-                    balances.append({
-                        "market": "spot",
-                        "asset": b["asset"],
-                        "free": free,
-                        "locked": locked,
-                        "balance": balance,
-                        "usd_value": round(usd_value, 2),
-                    })
-
         # USDM（灰尘过滤）
         for b in client.futures_account_balance():
             balance = float(b.get("balance", 0))
@@ -182,7 +150,7 @@ def summary():
 # ─── /api/positions ────────────────────────────────────────────────────────────
 @app.get("/api/positions", dependencies=[Depends(auth)])
 def list_positions(
-    market: str = Query(None, pattern="^(spot|usdm|coinm)$"),
+    market: str = Query(None, pattern="^(usdm|coinm)$"),
     symbol: str = None,
     direction: str = Query(None, pattern="^(Long|Short)$"),
     status: str = Query(None, pattern="^(open|closed)$"),
@@ -364,7 +332,7 @@ def position_mae_mfe_timeline(pid: int):
 
 # ─── /api/analytics ──────────────────────────────────────────────────────────────
 @app.get("/api/analytics", dependencies=[Depends(auth)])
-def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
+def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     # 严格按 market 过滤交易
     trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC", (market,))
 
@@ -443,7 +411,7 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
 
 # ─── /api/reports ────────────────────────────────────────────────────────────────
 @app.get("/api/reports", dependencies=[Depends(auth)])
-def reports(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
+def reports(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     closed = "exchange=%s AND market=%s AND close_time IS NOT NULL"
     args = (EXCHANGE, market)
     # 多空对比
@@ -493,7 +461,7 @@ def reports(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
 
 # ─── /api/symbols ────────────────────────────────────────────────────────────────
 @app.get("/api/symbols", dependencies=[Depends(auth)])
-def symbols(market: str = Query(None, pattern="^(spot|usdm|coinm)$")):
+def symbols(market: str = Query(None, pattern="^(usdm|coinm)$")):
     # 从数据库查询实际交易过的符号（动态）
     if market:
         trades = rows(

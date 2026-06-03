@@ -8,7 +8,7 @@ import { TradeRow } from "../components/TradeRow";
 import { MarketBadge } from "../components/Badge";
 import { Loading, ErrorBlock, Empty } from "../components/StateBlock";
 
-const MARKETS = ["", "usdm", "coinm", "spot"];
+const MARKETS = ["", "usdm", "coinm"];
 
 export function Journal() {
   const nav = useNavigate();

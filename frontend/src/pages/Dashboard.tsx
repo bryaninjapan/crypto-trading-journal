@@ -88,7 +88,7 @@ export function Dashboard() {
           <div className="flex items-center justify-between">
             <span className="text-label-caps uppercase text-on-surface-variant">Balances</span>
             <div className="flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1">
-              {["usdm", "coinm", "spot"].map((m) => (
+              {["usdm", "coinm"].map((m) => (
                 <button
                   key={m}
                   onClick={() => setBalanceMarket(m as Market)}
