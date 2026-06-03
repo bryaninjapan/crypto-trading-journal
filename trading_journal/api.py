@@ -65,19 +65,134 @@ def cumsum(series):
     return out
 
 
+# ─── Position Aggregation (fills → positions) ─────────────────────────────────
+def _build_one_position(market, symbol, pos_side, fills):
+    """把同一 position cycle 的 fills 組成一個 position dict。"""
+    if pos_side == "SHORT":
+        open_fills  = [f for f in fills if f.get("side") == "SELL"]
+        close_fills = [f for f in fills if f.get("side") == "BUY"]
+    else:  # LONG
+        open_fills  = [f for f in fills if f.get("side") == "BUY"]
+        close_fills = [f for f in fills if f.get("side") == "SELL"]
+
+    # 若全是同一 side（資料異常），fallback
+    if not open_fills:
+        open_fills = fills
+    open_fills  = sorted(open_fills,  key=lambda x: x.get("trade_time", 0))
+    close_fills = sorted(close_fills, key=lambda x: x.get("trade_time", 0))
+
+    open_time  = int(open_fills[0].get("trade_time", 0))
+    close_time = int(close_fills[-1].get("trade_time", 0)) if close_fills else None
+
+    open_qty  = sum(float(f.get("qty_base", 0)) for f in open_fills)
+    close_qty = sum(float(f.get("qty_base", 0)) for f in close_fills)
+
+    avg_entry = (
+        sum(float(f.get("price", 0)) * float(f.get("qty_base", 0)) for f in open_fills) / open_qty
+        if open_qty > 0 else 0.0
+    )
+    avg_exit = (
+        sum(float(f.get("price", 0)) * float(f.get("qty_base", 0)) for f in close_fills) / close_qty
+        if close_qty > 0 else None
+    )
+
+    realized_pnl = sum(float(f.get("realized_pnl", 0)) for f in fills)
+    fees         = sum(float(f.get("fee", 0) or 0) for f in fills)
+    hold_ms      = (close_time - open_time) if close_time else None
+
+    pnl_asset = fills[0].get("margin_asset") or "USDT"
+    fee_asset = fills[0].get("fee_asset") or pnl_asset
+    pos_id    = fills[0].get("trade_id")  # 以第一筆 fill 的 trade_id 作為 position ID
+
+    return {
+        "id":            pos_id,
+        "market":        market,
+        "symbol":        symbol,
+        "direction":     "Short" if pos_side == "SHORT" else "Long",
+        "open_trade_id": pos_id,
+        "open_time":     open_time,
+        "close_time":    close_time,
+        "hold_ms":       hold_ms,
+        "qty":           round(open_qty, 8),
+        "avg_entry":     round(avg_entry, 6),
+        "avg_exit":      round(avg_exit, 6) if avg_exit is not None else None,
+        "realized_pnl":  round(realized_pnl, 6),
+        "pnl_asset":     pnl_asset,
+        "is_estimated":  False,
+        "fees":          round(fees, 8),
+        "fee_asset":     fee_asset,
+        "funding":       0.0,
+        "num_fills":     len(fills),
+    }
+
+
+def build_positions_from_fills(fills):
+    """
+    將 fills 按 (market, symbol, position_side) 分組，
+    再用累積 qty 狀態機切割成一個個 position cycle。
+    """
+    from collections import defaultdict
+
+    groups = defaultdict(list)
+    for f in fills:
+        ps = f.get("position_side")
+        if not ps:          # spot 無 position_side，跳過
+            continue
+        key = (f.get("market"), f.get("symbol"), ps)
+        groups[key].append(f)
+
+    positions = []
+    for (market, symbol, pos_side), group_fills in groups.items():
+        group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
+
+        if pos_side == "SHORT":
+            is_open  = lambda f: f.get("side") == "SELL"
+            is_close = lambda f: f.get("side") == "BUY"
+        else:
+            is_open  = lambda f: f.get("side") == "BUY"
+            is_close = lambda f: f.get("side") == "SELL"
+
+        # 狀態機：追蹤累積開倉量
+        cycle_fills = []
+        open_qty    = 0.0
+
+        for f in group_fills:
+            qty = float(f.get("qty_base", 0))
+            cycle_fills.append(f)
+            if is_open(f):
+                open_qty += qty
+            elif is_close(f):
+                open_qty -= qty
+
+            # 當累積開倉量清零 → 一個 cycle 完成
+            if open_qty <= 1e-8 and cycle_fills:
+                positions.append(_build_one_position(market, symbol, pos_side, cycle_fills))
+                cycle_fills = []
+                open_qty    = 0.0
+
+        # 殘餘 fills = 尚未平倉的 open position
+        if cycle_fills:
+            positions.append(_build_one_position(market, symbol, pos_side, cycle_fills))
+
+    return positions
+
+
 # ─── /api/summary ──────────────────────────────────────────────────────────────
 @app.get("/api/summary", dependencies=[Depends(auth)])
 def summary():
     # 从数据库查询真实数据
     trades = rows("SELECT * FROM trades ORDER BY trade_time ASC")
 
-    total_positions = len(trades)
+    # 用聚合後 positions 計算 total_positions 和 win_rate（Step 5 fix）
+    futures_fills = [t for t in trades if t.get("market") in ("usdm", "coinm")]
+    agg_positions = build_positions_from_fills(futures_fills)
+    total_positions = len(agg_positions)
 
-    # 胜率计算（只计算有 realized_pnl 的交易，即期货/杠杆）
-    pnl_trades = [t for t in trades if t.get("realized_pnl") and float(t["realized_pnl"]) != 0]
-    if pnl_trades:
-        wins = len([t for t in pnl_trades if float(t["realized_pnl"]) > 0])
-        win_rate = (wins / len(pnl_trades)) * 100
+    # 勝率：以聚合 position 的總 PNL 正負計算
+    pnl_positions = [p for p in agg_positions if p.get("realized_pnl", 0) != 0]
+    if pnl_positions:
+        wins = len([p for p in pnl_positions if p["realized_pnl"] > 0])
+        win_rate = (wins / len(pnl_positions)) * 100
     else:
         win_rate = 0.0
 
@@ -88,50 +203,68 @@ def summary():
         if t.get("market") in ["usdm", "coinm"]
     ])
 
-    # 权益曲线（按交易时间的累积 PNL）
+    # 权益曲线：只含期货市场非零 PNL 点（Step 3 fix）
     equity_curve = []
     cum_pnl = 0.0
     for trade in trades:
-        if trade.get("realized_pnl"):
-            cum_pnl += float(trade["realized_pnl"])
+        if trade.get("market") not in ("usdm", "coinm"):
+            continue
+        pnl = float(trade.get("realized_pnl") or 0)
+        if pnl == 0:
+            continue  # 跳过开仓 fill（PNL=0）
+        cum_pnl += pnl
         equity_curve.append({
             "t": int(trade.get("trade_time", 0)),
-            "cum": round(cum_pnl, 8)
+            "cum": round(cum_pnl, 4),
         })
 
-    # 从 Binance API 查询真实余额
+    # 从 Binance API 查询真实余额 + USD 换算（Step 4 fix）
     from binance.client import Client
     try:
         client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
+
+        # 获取所有 ticker 价格用于 USD 换算
+        prices = {t["symbol"]: float(t["price"]) for t in client.get_all_tickers()}
+
+        def to_usd(asset: str, amount: float) -> float | None:
+            if asset == "USDT":
+                return round(amount, 2)
+            pair = f"{asset}USDT"
+            if pair in prices:
+                return round(amount * prices[pair], 2)
+            # 尝试反向（如 USDTBTC 不存在时用 BTCUSDT）
+            return None
+
         balances = []
 
         # USDM（灰尘过滤）
         for b in client.futures_account_balance():
             balance = float(b.get("balance", 0))
-            if balance > 0.001:  # USDM 灰尘临界值
+            if balance > 0.001:
+                asset = b["asset"]
                 balances.append({
                     "market": "usdm",
-                    "asset": b["asset"],
+                    "asset": asset,
                     "free": balance,
                     "locked": 0.0,
                     "balance": balance,
-                    "usd_value": None,
+                    "usd_value": to_usd(asset, balance),
                 })
 
         # COINM（灰尘过滤）
         for b in client.futures_coin_account_balance():
             balance = float(b.get("balance", 0))
-            if balance > 0.0001:  # COINM 灰尘临界值（更小）
+            if balance > 0.0001:
+                asset = b["asset"]
                 balances.append({
                     "market": "coinm",
-                    "asset": b["asset"],
+                    "asset": asset,
                     "free": balance,
                     "locked": 0.0,
                     "balance": balance,
-                    "usd_value": None,
+                    "usd_value": to_usd(asset, balance),
                 })
     except Exception as e:
-        # 如果 API 失败，返回空列表
         print(f"[warning] 无法从 Binance 查询余额: {e}")
         balances = []
 
@@ -156,51 +289,35 @@ def list_positions(
     status: str = Query(None, pattern="^(open|closed)$"),
     start: int = None,
     end: int = None,
-    sort: str = Query("trade_time", pattern="^(trade_time|side|symbol|realized_pnl)$"),
+    sort: str = Query("open_time", pattern="^(open_time|symbol|realized_pnl)$"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    # 从真实数据库查询交易（现货：直接返回交易记录）
-    trades = rows("SELECT * FROM trades ORDER BY trade_time DESC")
+    # Step 5 fix: 聚合 fills → positions
+    sql = "SELECT * FROM trades WHERE market IN ('usdm','coinm') ORDER BY trade_time ASC"
+    all_fills = rows(sql)
+    all_positions = build_positions_from_fills(all_fills)
 
-    all_positions = []
-    for t in trades:
-        pos = {
-            "id": t.get("trade_id"),
-            "market": t.get("market"),
-            "symbol": t.get("symbol"),
-            "direction": "LONG" if t.get("side") == "BUY" else "SHORT",
-            "open_trade_id": t.get("trade_id"),
-            "open_time": int(t.get("trade_time", 0)),
-            "close_time": int(t.get("trade_time", 0)),
-            "hold_ms": 0,
-            "qty": float(t.get("qty_base", 0)),
-            "avg_entry": float(t.get("price", 0)),
-            "avg_exit": float(t.get("price", 0)),
-            "realized_pnl": float(t.get("realized_pnl", 0)) if t.get("realized_pnl") else 0.0,
-            "pnl_asset": "USDT",
-            "is_estimated": False,
-            "fees": float(t.get("fee", 0)) if t.get("fee") else 0.0,
-            "fee_asset": t.get("fee_asset") or "USDT",
-            "funding": 0.0,
-            "num_fills": 1,
-        }
+    # 過濾
+    if market:
+        all_positions = [p for p in all_positions if p["market"] == market]
+    if symbol:
+        all_positions = [p for p in all_positions if p["symbol"] == symbol]
+    if direction:
+        all_positions = [p for p in all_positions if p["direction"] == direction]
+    if status == "closed":
+        all_positions = [p for p in all_positions if p.get("close_time") is not None]
+    elif status == "open":
+        all_positions = [p for p in all_positions if p.get("close_time") is None]
 
-        if market and pos["market"] != market:
-            continue
-        if symbol and pos["symbol"] != symbol:
-            continue
-        if direction and pos["direction"] != direction:
-            continue
-
-        all_positions.append(pos)
-
-    reverse = order == "desc"
-    all_positions.sort(key=lambda x: x["open_time"], reverse=reverse)
+    # 排序
+    sort_key = {"open_time": "open_time", "symbol": "symbol", "realized_pnl": "realized_pnl"}.get(sort, "open_time")
+    reverse = (order == "desc")
+    all_positions.sort(key=lambda x: (x.get(sort_key) or 0), reverse=reverse)
 
     total = len(all_positions)
-    data = all_positions[offset:offset + limit]
+    data  = all_positions[offset:offset + limit]
 
     return {"total": total, "limit": limit, "offset": offset, "positions": data}
 
@@ -208,34 +325,51 @@ def list_positions(
 # ─── /api/positions/{trade_id} ───────────────────────────────────────────────────
 @app.get("/api/positions/{trade_id}", dependencies=[Depends(auth)])
 def position_detail(trade_id: int):
-    # 从数据库查询真实交易数据
-    t = one(
-        "SELECT * FROM trades WHERE trade_id = %s",
-        (trade_id,)
-    )
-    if not t:
+    # Step 7 fix: 找到 fill 所屬的 position cycle，回傳聚合結果
+    anchor = one("SELECT * FROM trades WHERE trade_id = %s", (trade_id,))
+    if not anchor:
         raise HTTPException(status_code=404, detail="Position not found")
 
+    # 取同一 (market, symbol, position_side) 的所有 fills
+    same_group = rows(
+        "SELECT * FROM trades WHERE market=%s AND symbol=%s AND position_side=%s ORDER BY trade_time ASC",
+        (anchor["market"], anchor["symbol"], anchor["position_side"]),
+    )
+
+    # 聚合並找出包含 trade_id 的那個 position
+    positions = build_positions_from_fills(same_group)
+    target = next((p for p in positions if p["id"] == trade_id), None)
+
+    if not target:
+        # fallback: 用 anchor fill 本身組成單筆
+        target = _build_one_position(
+            anchor["market"], anchor["symbol"],
+            anchor["position_side"] or "LONG", [anchor]
+        )
+
+    # fills 明細（供前端 PositionDetail 展示）
+    fill_ids = rows(
+        "SELECT trade_id, side, price, qty_base, realized_pnl, fee, fee_asset, trade_time "
+        "FROM trades WHERE market=%s AND symbol=%s AND position_side=%s ORDER BY trade_time ASC",
+        (anchor["market"], anchor["symbol"], anchor["position_side"]),
+    )
+
     return {
-        "id": t.get("trade_id"),
+        **target,
         "exchange": EXCHANGE,
-        "market": t.get("market"),
-        "symbol": t.get("symbol"),
-        "direction": "LONG" if t.get("side") == "BUY" else "SHORT",
-        "open_trade_id": t.get("trade_id"),
-        "open_time": int(t.get("trade_time", 0)),
-        "close_time": int(t.get("trade_time", 0)),
-        "hold_ms": 0,
-        "qty": float(t.get("qty_base", 0)),
-        "avg_entry": float(t.get("price", 0)),
-        "avg_exit": float(t.get("price", 0)),
-        "realized_pnl": float(t.get("realized_pnl", 0)) if t.get("realized_pnl") else 0.0,
-        "pnl_asset": "USDT",
-        "is_estimated": False,
-        "fees": float(t.get("fee", 0)) if t.get("fee") else 0.0,
-        "fee_asset": t.get("fee_asset") or "USDT",
-        "funding": 0.0,
-        "num_fills": 1,
+        "fills": [
+            {
+                "trade_id":     f["trade_id"],
+                "side":         f["side"],
+                "price":        float(f["price"]),
+                "qty_base":     float(f["qty_base"]),
+                "realized_pnl": float(f["realized_pnl"] or 0),
+                "fee":          float(f["fee"] or 0),
+                "fee_asset":    f["fee_asset"],
+                "trade_time":   int(f["trade_time"]),
+            }
+            for f in fill_ids
+        ],
     }
 
 
@@ -337,84 +471,104 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC", (market,))
 
     total_trades = len(trades)
-    total_pnl = sum([float(t.get("realized_pnl", 0)) for t in trades])
+    total_pnl = sum(float(t.get("realized_pnl", 0)) for t in trades)
 
-    # 按方向分类
-    long_trades = [t for t in trades if t.get("side") == "BUY"]
-    short_trades = [t for t in trades if t.get("side") == "SELL"]
+    # Step 2 fix: 按 position_side 分類（不是 side）
+    # SHORT position: position_side=="SHORT"；opening fill=SELL, closing fill=BUY
+    # LONG  position: position_side=="LONG"；opening fill=BUY,  closing fill=SELL
+    long_trades  = [t for t in trades if t.get("position_side") == "LONG"]
+    short_trades = [t for t in trades if t.get("position_side") == "SHORT"]
+    # fallback（無 position_side 的舊資料）
+    if not long_trades and not short_trades:
+        long_trades  = [t for t in trades if t.get("side") == "BUY"]
+        short_trades = [t for t in trades if t.get("side") == "SELL"]
 
-    # 胜负统计（有 PNL 的交易）
+    # 勝負統計：只看有 PNL 的 fill（closing fills）
     pnl_trades = [t for t in trades if float(t.get("realized_pnl", 0)) != 0]
-    wins = len([t for t in pnl_trades if float(t.get("realized_pnl", 0)) > 0])
-    losses = len([t for t in pnl_trades if float(t.get("realized_pnl", 0)) <= 0])
-    win_rate = (wins / len(pnl_trades) * 100) if pnl_trades else 0.0
+    wins   = len([t for t in pnl_trades if float(t.get("realized_pnl", 0)) > 0])
+    losses = len([t for t in pnl_trades if float(t.get("realized_pnl", 0)) < 0])
+    win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
 
-    # 多头统计
-    long_pnl = sum([float(t.get("realized_pnl", 0)) for t in long_trades])
-    long_wins = len([t for t in long_trades if float(t.get("realized_pnl", 0)) > 0])
-    long_losses = len([t for t in long_trades if float(t.get("realized_pnl", 0)) <= 0])
-    long_wins_pnl = sum([float(t.get("realized_pnl", 0)) for t in long_trades if float(t.get("realized_pnl", 0)) > 0]) or 0.01
-    long_losses_pnl = sum([float(t.get("realized_pnl", 0)) for t in long_trades if float(t.get("realized_pnl", 0)) < 0]) or -0.01
+    # 多頭統計（按 position_side=LONG）
+    long_pnl_trades  = [t for t in long_trades  if float(t.get("realized_pnl", 0)) != 0]
+    long_pnl         = sum(float(t.get("realized_pnl", 0)) for t in long_trades)
+    long_wins        = len([t for t in long_pnl_trades if float(t.get("realized_pnl", 0)) > 0])
+    long_losses      = len([t for t in long_pnl_trades if float(t.get("realized_pnl", 0)) < 0])
+    long_wins_pnl    = sum(float(t.get("realized_pnl", 0)) for t in long_pnl_trades if float(t.get("realized_pnl", 0)) > 0) or 0.01
+    long_losses_pnl  = sum(float(t.get("realized_pnl", 0)) for t in long_pnl_trades if float(t.get("realized_pnl", 0)) < 0) or -0.01
 
-    # 空头统计
-    short_pnl = sum([float(t.get("realized_pnl", 0)) for t in short_trades])
-    short_wins = len([t for t in short_trades if float(t.get("realized_pnl", 0)) > 0])
-    short_losses = len([t for t in short_trades if float(t.get("realized_pnl", 0)) <= 0])
-    short_wins_pnl = sum([float(t.get("realized_pnl", 0)) for t in short_trades if float(t.get("realized_pnl", 0)) > 0]) or 0.01
-    short_losses_pnl = sum([float(t.get("realized_pnl", 0)) for t in short_trades if float(t.get("realized_pnl", 0)) < 0]) or -0.01
+    # 空頭統計（按 position_side=SHORT）
+    short_pnl_trades = [t for t in short_trades if float(t.get("realized_pnl", 0)) != 0]
+    short_pnl        = sum(float(t.get("realized_pnl", 0)) for t in short_trades)
+    short_wins       = len([t for t in short_pnl_trades if float(t.get("realized_pnl", 0)) > 0])
+    short_losses     = len([t for t in short_pnl_trades if float(t.get("realized_pnl", 0)) < 0])
+    short_wins_pnl   = sum(float(t.get("realized_pnl", 0)) for t in short_pnl_trades if float(t.get("realized_pnl", 0)) > 0) or 0.01
+    short_losses_pnl = sum(float(t.get("realized_pnl", 0)) for t in short_pnl_trades if float(t.get("realized_pnl", 0)) < 0) or -0.01
 
-    # 最大连胜/连败（按时间顺序遍历有 PNL 的交易）
+    # 平均持倉時間：從聚合後 positions 計算
+    agg_positions = build_positions_from_fills(trades)
+    closed_positions = [p for p in agg_positions if p.get("hold_ms") is not None]
+    avg_hold_ms = int(sum(p["hold_ms"] for p in closed_positions) / len(closed_positions)) if closed_positions else 0
+
+    # 最大連勝/連敗（按時間順序遍歷有 PNL 的 fill）
     max_consec_win = max_consec_loss = cur_win = cur_loss = 0
     for t in pnl_trades:
         if float(t.get("realized_pnl", 0)) > 0:
-            cur_win += 1
-            cur_loss = 0
+            cur_win += 1; cur_loss = 0
             max_consec_win = max(max_consec_win, cur_win)
         else:
-            cur_loss += 1
-            cur_win = 0
+            cur_loss += 1; cur_win = 0
             max_consec_loss = max(max_consec_loss, cur_loss)
+
+    # 日均計算（以有交易的時間跨度為準）
+    if trades:
+        time_span_days = max(1, (max(int(t.get("trade_time", 0)) for t in trades) -
+                                  min(int(t.get("trade_time", 0)) for t in trades)) / 86400000)
+    else:
+        time_span_days = 1
 
     return {
         "market": market,
         "kpi": {
-            "total_trades": total_trades,
-            "avg_hold_ms": 0,
+            "total_trades": len(agg_positions),
+            "avg_hold_ms": avg_hold_ms,
             "win_rate": round(win_rate, 2),
-            "longs": len(long_trades),
-            "shorts": len(short_trades),
-            "long_pct": round(len(long_trades) / total_trades * 100, 2) if total_trades > 0 else 0,
+            "longs": len([p for p in agg_positions if p["direction"] == "Long"]),
+            "shorts": len([p for p in agg_positions if p["direction"] == "Short"]),
+            "long_pct": round(
+                len([p for p in agg_positions if p["direction"] == "Long"]) / len(agg_positions) * 100, 2
+            ) if agg_positions else 0,
         },
         "statistics": {
             "total_gain_loss": round(total_pnl, 2),
-            "trade_expectancy": round(total_pnl / total_trades if total_trades > 0 else 0, 2),
-            "avg_daily_gain": round(total_pnl / 30, 2),
+            "trade_expectancy": round(total_pnl / len(agg_positions) if agg_positions else 0, 2),
+            "avg_daily_gain": round(total_pnl / time_span_days, 2),
             "avg_daily_volume": 0,
-            "largest_gain": round(max([float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) > 0], default=0), 2),
+            "largest_gain": round(max((float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) > 0), default=0), 2),
             "total_trades_volume": 0,
-            "avg_trades_per_day": 0,
-            "avg_trade_win": round(long_wins_pnl / long_wins if long_wins > 0 else 0, 2),
-            "avg_trade_loss": round(long_losses_pnl / long_losses if long_losses > 0 else 0, 2),
-            "largest_losses": round(min([float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) < 0], default=0), 2),
+            "avg_trades_per_day": round(len(agg_positions) / time_span_days, 2),
+            "avg_trade_win": round((long_wins_pnl + short_wins_pnl - 0.02) / (long_wins + short_wins) if (long_wins + short_wins) > 0 else 0, 2),
+            "avg_trade_loss": round((long_losses_pnl + short_losses_pnl + 0.02) / (long_losses + short_losses) if (long_losses + short_losses) > 0 else 0, 2),
+            "largest_losses": round(min((float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) < 0), default=0), 2),
             "max_consecutive_win": max_consec_win,
             "max_consecutive_loss": max_consec_loss,
         },
         "longs": {
-            "count": len(long_trades),
-            "win_ratio": round(long_wins / len(long_trades) * 100 if long_trades else 0, 2),
+            "count": len([p for p in agg_positions if p["direction"] == "Long"]),
+            "win_ratio": round(long_wins / (long_wins + long_losses) * 100 if (long_wins + long_losses) > 0 else 0, 2),
             "wins": long_wins,
             "losses": long_losses,
-            "avg_duration_ms": 0,
+            "avg_duration_ms": avg_hold_ms,
             "total_realized_pnl": round(long_pnl, 2),
             "avg_win": round(long_wins_pnl / long_wins if long_wins > 0 else 0, 2),
             "avg_loss": round(long_losses_pnl / long_losses if long_losses > 0 else 0, 2),
         },
         "shorts": {
-            "count": len(short_trades),
-            "win_ratio": round(short_wins / len(short_trades) * 100 if short_trades else 0, 2),
+            "count": len([p for p in agg_positions if p["direction"] == "Short"]),
+            "win_ratio": round(short_wins / (short_wins + short_losses) * 100 if (short_wins + short_losses) > 0 else 0, 2),
             "wins": short_wins,
             "losses": short_losses,
-            "avg_duration_ms": 0,
+            "avg_duration_ms": avg_hold_ms,
             "total_realized_pnl": round(short_pnl, 2),
             "avg_win": round(short_wins_pnl / short_wins if short_wins > 0 else 0, 2),
             "avg_loss": round(short_losses_pnl / short_losses if short_losses > 0 else 0, 2),

@@ -139,33 +139,87 @@ def fetch_spot_trades(client, symbol):
         return []
 
 
-def fetch_usdm_trades(client, symbol):
-    """USDM 期货交易（U本位，BTCUSDT 等）"""
+def discover_usdm_symbols(client, start_ms):
+    """
+    Step A3: 用 income history 發現每個符號的最早交易時間。
+    返回 dict {symbol: earliest_ms}
+    注意：Binance /fapi/v1/userTrades startTime 只返回後 7 天窗口，
+    因此每個符號必須用自己的 earliest income time 作 startTime。
+    """
+    print(f"  [discovery] 查詢 USDM income history...")
+    symbol_earliest = {}  # sym -> earliest income time
+    try:
+        inc = client.futures_income_history(
+            incomeType='REALIZED_PNL', limit=1000, startTime=start_ms
+        )
+        for item in inc:
+            sym = item.get('symbol', '').strip()
+            t = item.get('time', 0)
+            if sym and t:
+                if sym not in symbol_earliest or t < symbol_earliest[sym]:
+                    symbol_earliest[sym] = t
+        from datetime import datetime
+        print(f"  [discovery] 找到 {len(symbol_earliest)} 個 USDM 符號: {sorted(symbol_earliest.keys())}")
+        for sym, t in sorted(symbol_earliest.items()):
+            print(f"    {sym}: earliest={datetime.fromtimestamp(t/1000)}")
+    except Exception as e:
+        print(f"  [discovery] ✗ income history 失敗: {e}")
+    return symbol_earliest
+
+
+def discover_coinm_symbols(client, start_ms):
+    """用 COINM income history 發現每個符號的最早交易時間。"""
+    print(f"  [discovery] 查詢 COINM income history...")
+    symbol_earliest = {}
+    try:
+        inc = client.futures_coin_income_history(
+            incomeType='REALIZED_PNL', limit=1000, startTime=start_ms
+        )
+        for item in inc:
+            sym = item.get('symbol', '').strip()
+            t = item.get('time', 0)
+            if sym and t:
+                if sym not in symbol_earliest or t < symbol_earliest[sym]:
+                    symbol_earliest[sym] = t
+        print(f"  [discovery] 找到 {len(symbol_earliest)} 個 COINM 符號: {sorted(symbol_earliest.keys())}")
+    except Exception as e:
+        print(f"  [discovery] COINM income history: {e} (可能無歷史)")
+    return symbol_earliest
+
+
+def fetch_usdm_trades(client, symbol, start_ms=None):
+    """USDM 期货交易（U本位）— 支援 startTime 抓歷史"""
     endpoint = "GET /fapi/v1/userTrades"
     try:
-        trades = client.futures_account_trades(symbol=symbol, limit=1000)
-        print(f"  {symbol:10} {endpoint:30} → {len(trades):4} 条")
+        kwargs = {"symbol": symbol, "limit": 1000}
+        if start_ms:
+            kwargs["startTime"] = start_ms
+        trades = client.futures_account_trades(**kwargs)
+        print(f"  {symbol:20} {endpoint:30} → {len(trades):4} 条")
         return trades
     except BinanceAPIException as e:
-        print(f"  {symbol:10} {endpoint:30} → ✗ [{e.code}] {e.message}")
+        print(f"  {symbol:20} {endpoint:30} → ✗ [{e.code}] {e.message}")
         return []
     except Exception as e:
-        print(f"  {symbol:10} {endpoint:30} → ✗ {type(e).__name__}: {e}")
+        print(f"  {symbol:20} {endpoint:30} → ✗ {type(e).__name__}: {e}")
         return []
 
 
-def fetch_coinm_trades(client, symbol):
-    """COINM 期货交易（币本位，BTCUSD_PERP 等）"""
+def fetch_coinm_trades(client, symbol, start_ms=None):
+    """COINM 期货交易（币本位）— 支援 startTime 抓歷史"""
     endpoint = "GET /dapi/v1/userTrades"
     try:
-        trades = client.futures_coin_account_trades(symbol=symbol, limit=1000)
-        print(f"  {symbol:15} {endpoint:30} → {len(trades):4} 条")
+        kwargs = {"symbol": symbol, "limit": 1000}
+        if start_ms:
+            kwargs["startTime"] = start_ms
+        trades = client.futures_coin_account_trades(**kwargs)
+        print(f"  {symbol:20} {endpoint:30} → {len(trades):4} 条")
         return trades
     except BinanceAPIException as e:
-        print(f"  {symbol:15} {endpoint:30} → ✗ [{e.code}] {e.message}")
+        print(f"  {symbol:20} {endpoint:30} → ✗ [{e.code}] {e.message}")
         return []
     except Exception as e:
-        print(f"  {symbol:15} {endpoint:30} → ✗ {type(e).__name__}: {e}")
+        print(f"  {symbol:20} {endpoint:30} → ✗ {type(e).__name__}: {e}")
         return []
 
 
@@ -209,10 +263,30 @@ def main():
         print(f"[✗] 初始化失败: {e}")
         return
 
-    # 定义交易对（用户指定的简化列表）
-    spot_symbols = ['BTCUSDT', 'ADAUSDT', 'ETHUSDT']
-    usdm_symbols = ['BTCUSDT', 'ADAUSDT', 'ETHUSDT']
-    coinm_symbols = ['BTCUSD_PERP', 'ADAUSD_PERP', 'ETHUSD_PERP']
+    # Step A3: 自動發現符號 + 每個符號用自己的 income 時間作為 startTime
+    import datetime
+    DISCOVERY_START = int(datetime.datetime(2024, 1, 1).timestamp() * 1000)
+
+    # Spot：保留硬編碼（spot 無 income discovery）
+    spot_symbols = ['BTCUSDT', 'ADAUSDT', 'ETHUSDT', 'BNBUSDT', 'ETHBTC']
+
+    # USDM：{symbol: earliest_income_ms}
+    usdm_symbol_times = discover_usdm_symbols(client, DISCOVERY_START)
+    # 補充保底（這些符號在 income 中可能沒出現但值得查）
+    for sym in ['BTCUSDT', 'ETHUSDT', 'ADAUSDT']:
+        if sym not in usdm_symbol_times:
+            usdm_symbol_times[sym] = DISCOVERY_START
+
+    # COINM：{symbol: earliest_income_ms}
+    coinm_symbol_times = discover_coinm_symbols(client, DISCOVERY_START)
+    # COINM fallback：income history 為空時用近 60 天（讓 Binance 7 天窗口能抓到最近交易）
+    COINM_RECENT_START = int((time.time() - 60 * 86400) * 1000)
+    for sym in ['BTCUSD_PERP', 'ADAUSD_PERP', 'ETHUSD_PERP']:
+        if sym not in coinm_symbol_times:
+            coinm_symbol_times[sym] = COINM_RECENT_START
+
+    print(f"\nUSDM 將抓 {len(usdm_symbol_times)} 個符號（每個用自己的 earliest income 時間）")
+    print(f"COINM 將抓 {len(coinm_symbol_times)} 個符號")
 
     # 导入 Spot
     print("\n[导入] Spot (GET /api/v3/myTrades):")
@@ -238,10 +312,11 @@ def main():
         processor.flush('spot', symbol)
         time.sleep(0.1)
 
-    # 导入 USDM
+    # 导入 USDM（每個符號用自己的 income 最早時間前推 1 天）
     print("\n[导入] USDM (GET /fapi/v1/userTrades):")
-    for symbol in usdm_symbols:
-        trades = fetch_usdm_trades(client, symbol)
+    for symbol, earliest_income_ms in sorted(usdm_symbol_times.items()):
+        sym_start = max(DISCOVERY_START, earliest_income_ms - 86400000)
+        trades = fetch_usdm_trades(client, symbol, start_ms=sym_start)
         for trade in trades:
             processor.insert_trade({
                 'symbol': symbol,
@@ -260,12 +335,13 @@ def main():
                 'time': trade['time'],
             }, 'usdm')
         processor.flush('usdm', symbol)
-        time.sleep(0.1)
+        time.sleep(0.2)
 
-    # 导入 COINM
+    # 导入 COINM（每個符號用自己的 income 最早時間前推 1 天）
     print("\n[导入] COINM (GET /dapi/v1/userTrades):")
-    for symbol in coinm_symbols:
-        trades = fetch_coinm_trades(client, symbol)
+    for symbol, earliest_income_ms in sorted(coinm_symbol_times.items()):
+        sym_start = max(DISCOVERY_START, earliest_income_ms - 86400000)
+        trades = fetch_coinm_trades(client, symbol, start_ms=sym_start)
         for trade in trades:
             processor.insert_trade({
                 'symbol': symbol,
@@ -273,8 +349,8 @@ def main():
                 'orderId': trade.get('orderId'),
                 'side': trade['side'],
                 'price': trade['price'],
-                'qty': trade.get('baseQty', trade.get('qty', 0)),  # COINM 用 baseQty
-                'quoteQty': None,  # COINM 无 quoteQty，insert_trade 会计算
+                'qty': trade.get('baseQty', trade.get('qty', 0)),
+                'quoteQty': None,
                 'realizedPnl': float(trade.get('realizedPnl', 0)),
                 'marginAsset': trade.get('marginAsset'),
                 'positionSide': trade.get('positionSide'),
@@ -284,7 +360,7 @@ def main():
                 'time': trade['time'],
             }, 'coinm')
         processor.flush('coinm', symbol)
-        time.sleep(0.1)
+        time.sleep(0.2)
 
     processor.print_stats()
     processor.close()
