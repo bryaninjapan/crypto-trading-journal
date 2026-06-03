@@ -105862,16 +105862,16 @@ const MARKET_LABEL = {
   coinm: "COIN-M"
 };
 function BalanceDonut({ balances }) {
-  const valid = balances.filter((b) => b.balance && b.balance > 0).sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+  const valid = balances.filter((b) => b.usd_value && b.usd_value > 0).sort((a, b) => (b.usd_value ?? 0) - (a.usd_value ?? 0));
   if (!valid.length) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-data-mono text-on-surface-variant", children: "No balances" });
   }
   const topN = 4;
   const top = valid.slice(0, topN);
   const others = valid.slice(topN);
-  const otherSum = others.reduce((s, b) => s + (b.balance ?? 0), 0);
+  const otherSum = others.reduce((s, b) => s + (b.usd_value ?? 0), 0);
   const labels = [...top.map((b) => b.asset), ...otherSum > 0 ? ["Others"] : []];
-  const values = [...top.map((b) => b.balance ?? 0), ...otherSum > 0 ? [otherSum] : []];
+  const values = [...top.map((b) => b.usd_value ?? 0), ...otherSum > 0 ? [otherSum] : []];
   const total = values.reduce((s, v2) => s + v2, 0);
   const colors = ["#c0c1ff", "#7bd0ff", "#ddb7ff", "#10B981", "#EF4444"];
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -105992,8 +105992,8 @@ function Dashboard() {
           /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: "px-lg py-2 text-right", children: "Value (est.)" })
         ] }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: marketBalances.slice(0, 10).map((b) => {
-          const total = marketBalances.reduce((s, x2) => s + (x2.balance ?? 0), 0);
-          const pct = total > 0 ? (b.balance ?? 0) / total * 100 : 0;
+          const total = marketBalances.reduce((s, x2) => s + (x2.usd_value ?? 0), 0);
+          const pct = total > 0 ? (b.usd_value ?? 0) / total * 100 : 0;
           return /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: "border-b border-white/[0.06] hover:bg-surface-container/50", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-lg py-2 font-semibold text-on-surface", children: b.asset || "—" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "px-2 py-2 text-right text-on-surface", children: fmtNum(b.balance, 6) }),
@@ -106123,7 +106123,6 @@ function TradeRow({ position, rowNum }) {
 const MARKETS = ["", "usdm", "coinm"];
 function Journal() {
   var _a, _b;
-  const nav = useNavigate();
   const [market, setMarket] = reactExports.useState("");
   const [limit, setLimit] = reactExports.useState(20);
   const [offset, setOffset] = reactExports.useState(0);
@@ -106152,7 +106151,10 @@ function Journal() {
         {
           hover: true,
           className: "!p-md cursor-pointer",
-          onClick: () => nav(`/positions/${s.symbol}`),
+          onClick: () => {
+            setMarket(s.market === "usdm" ? "usdm" : s.market === "coinm" ? "coinm" : "");
+            window.location.hash = `#symbol=${s.symbol}`;
+          },
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-between", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-body-bold font-semibold", children: s.symbol }),

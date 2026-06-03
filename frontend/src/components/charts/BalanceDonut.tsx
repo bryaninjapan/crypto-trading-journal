@@ -3,10 +3,10 @@ import { PlotlyChart } from "./PlotlyChart";
 import { fmtNum } from "../../lib/format";
 
 export function BalanceDonut({ balances }: { balances: Balance[] }) {
-  // 過濾有效餘額 + 按大小排序
+  // 過濾有效餘額 + 按 USD value 大小排序
   const valid = balances
-    .filter((b) => b.balance && b.balance > 0)
-    .sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+    .filter((b) => b.usd_value && b.usd_value > 0)
+    .sort((a, b) => (b.usd_value ?? 0) - (a.usd_value ?? 0));
 
   if (!valid.length) {
     return <div className="text-data-mono text-on-surface-variant">No balances</div>;
@@ -16,10 +16,10 @@ export function BalanceDonut({ balances }: { balances: Balance[] }) {
   const topN = 4;
   const top = valid.slice(0, topN);
   const others = valid.slice(topN);
-  const otherSum = others.reduce((s, b) => s + (b.balance ?? 0), 0);
+  const otherSum = others.reduce((s, b) => s + (b.usd_value ?? 0), 0);
 
   const labels = [...top.map((b) => b.asset), ...(otherSum > 0 ? ["Others"] : [])];
-  const values = [...top.map((b) => b.balance ?? 0), ...(otherSum > 0 ? [otherSum] : [])];
+  const values = [...top.map((b) => b.usd_value ?? 0), ...(otherSum > 0 ? [otherSum] : [])];
   const total = values.reduce((s, v) => s + v, 0);
 
   // 配色循環

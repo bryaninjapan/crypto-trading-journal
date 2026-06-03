@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
@@ -11,7 +10,6 @@ import { Loading, ErrorBlock, Empty } from "../components/StateBlock";
 const MARKETS = ["", "usdm", "coinm"];
 
 export function Journal() {
-  const nav = useNavigate();
   const [market, setMarket] = useState("");
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
@@ -57,7 +55,11 @@ export function Journal() {
                 key={`${s.market}-${s.symbol}`}
                 hover
                 className="!p-md cursor-pointer"
-                onClick={() => nav(`/positions/${s.symbol}`)}
+                onClick={() => {
+                  setMarket(s.market === "usdm" ? "usdm" : s.market === "coinm" ? "coinm" : "");
+                  // 過濾該 symbol 的交易（待前端實現）
+                  window.location.hash = `#symbol=${s.symbol}`;
+                }}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

@@ -117,8 +117,8 @@ export function Dashboard() {
             </thead>
             <tbody>
               {marketBalances.slice(0, 10).map((b) => {
-                const total = marketBalances.reduce((s, x) => s + (x.balance ?? 0), 0);
-                const pct = total > 0 ? ((b.balance ?? 0) / total) * 100 : 0;
+                const total = marketBalances.reduce((s, x) => s + (x.usd_value ?? 0), 0);
+                const pct = total > 0 ? ((b.usd_value ?? 0) / total) * 100 : 0;
                 return (
                   <tr key={b.asset || "unknown"} className="border-b border-white/[0.06] hover:bg-surface-container/50">
                     <td className="px-lg py-2 font-semibold text-on-surface">{b.asset || "—"}</td>
