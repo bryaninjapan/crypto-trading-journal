@@ -128,51 +128,72 @@ def _build_one_position(market, symbol, pos_side, fills):
 
 def build_positions_from_fills(fills):
     """
-    將 fills 按 (market, symbol, position_side) 分組，
-    再用累積 qty 狀態機切割成一個個 position cycle。
+    將 fills 按 (market, symbol) 分組，
+    再用方向偵測狀態機切割成一個個 position cycle。
+
+    新算法：追蹤累積方向（net qty 的符號）
+    - BUY 群 (cum_qty > 0) = LONG 部分
+    - SELL 群 (cum_qty < 0) = SHORT 部分
+    - 當方向改變（LONG → SHORT 或 SHORT → LONG）時，一個 cycle 完成
     """
     from collections import defaultdict
 
+    # 先按 (market, symbol) 分組，不按 position_side
     groups = defaultdict(list)
     for f in fills:
-        ps = f.get("position_side")
-        if not ps:          # spot 無 position_side，跳過
+        if not f.get("position_side"):  # spot 無 position_side，跳過
             continue
-        key = (f.get("market"), f.get("symbol"), ps)
+        key = (f.get("market"), f.get("symbol"))
         groups[key].append(f)
 
     positions = []
-    for (market, symbol, pos_side), group_fills in groups.items():
+    for (market, symbol), group_fills in groups.items():
         group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
 
-        if pos_side == "SHORT":
-            is_open  = lambda f: f.get("side") == "SELL"
-            is_close = lambda f: f.get("side") == "BUY"
-        else:
-            is_open  = lambda f: f.get("side") == "BUY"
-            is_close = lambda f: f.get("side") == "SELL"
-
-        # 狀態機：追蹤累積開倉量
+        # 狀態機：追蹤累積方向和方向變化
         cycle_fills = []
-        open_qty    = 0.0
+        cum_qty     = 0.0
+        curr_direction = None  # None, "LONG" (cum_qty > 0), or "SHORT" (cum_qty < 0)
 
         for f in group_fills:
+            side = f.get("side")  # "BUY" or "SELL"
             qty = float(f.get("qty_base", 0))
-            cycle_fills.append(f)
-            if is_open(f):
-                open_qty += qty
-            elif is_close(f):
-                open_qty -= qty
 
-            # 當累積開倉量清零 → 一個 cycle 完成
-            if open_qty <= 1e-8 and cycle_fills:
-                positions.append(_build_one_position(market, symbol, pos_side, cycle_fills))
+            # 計算本次操作後的 signed qty
+            delta = qty if side == "BUY" else -qty
+            new_cum_qty = cum_qty + delta
+
+            # 判斷新方向
+            if new_cum_qty > 1e-8:
+                new_direction = "LONG"
+            elif new_cum_qty < -1e-8:
+                new_direction = "SHORT"
+            else:
+                new_direction = None  # 平衡（接近 0）
+
+            # 檢測方向是否改變（及時結束 cycle）
+            direction_changed = (
+                curr_direction is not None and
+                new_direction is not None and
+                curr_direction != new_direction
+            )
+
+            if direction_changed and cycle_fills:
+                # 結束上一個 cycle
+                inferred_pos_side = curr_direction
+                positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
                 cycle_fills = []
-                open_qty    = 0.0
+
+            # 加入當前 fill 到 cycle
+            cycle_fills.append(f)
+            cum_qty = new_cum_qty
+            if new_direction is not None:
+                curr_direction = new_direction
 
         # 殘餘 fills = 尚未平倉的 open position
         if cycle_fills:
-            positions.append(_build_one_position(market, symbol, pos_side, cycle_fills))
+            inferred_pos_side = curr_direction or "LONG"
+            positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
 
     return positions
 
@@ -325,19 +346,19 @@ def list_positions(
 # ─── /api/positions/{trade_id} ───────────────────────────────────────────────────
 @app.get("/api/positions/{trade_id}", dependencies=[Depends(auth)])
 def position_detail(trade_id: int):
-    # Step 7 fix: 找到 fill 所屬的 position cycle，回傳聚合結果
+    # 找到 fill 所屬的 position cycle，回傳聚合結果 + 該 position 的 fills
     anchor = one("SELECT * FROM trades WHERE trade_id = %s", (trade_id,))
     if not anchor:
         raise HTTPException(status_code=404, detail="Position not found")
 
-    # 取同一 (market, symbol, position_side) 的所有 fills
-    same_group = rows(
-        "SELECT * FROM trades WHERE market=%s AND symbol=%s AND position_side=%s ORDER BY trade_time ASC",
-        (anchor["market"], anchor["symbol"], anchor["position_side"]),
+    # 取同一 (market, symbol) 的所有 fills（不按 position_side 篩選）
+    same_symbol = rows(
+        "SELECT * FROM trades WHERE market=%s AND symbol=%s AND position_side IS NOT NULL ORDER BY trade_time ASC",
+        (anchor["market"], anchor["symbol"]),
     )
 
     # 聚合並找出包含 trade_id 的那個 position
-    positions = build_positions_from_fills(same_group)
+    positions = build_positions_from_fills(same_symbol)
     target = next((p for p in positions if p["id"] == trade_id), None)
 
     if not target:
@@ -346,13 +367,65 @@ def position_detail(trade_id: int):
             anchor["market"], anchor["symbol"],
             anchor["position_side"] or "LONG", [anchor]
         )
+        target_fills = [anchor]
+    else:
+        # 重新聚合以找出這個 position 對應的 fills
+        # （build_positions_from_fills 本身會分割，我們只保留包含 trade_id 的那組）
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for f in same_symbol:
+            key = (f.get("market"), f.get("symbol"))
+            groups[key].append(f)
 
-    # fills 明細（供前端 PositionDetail 展示）
-    fill_ids = rows(
-        "SELECT trade_id, side, price, qty_base, realized_pnl, fee, fee_asset, trade_time "
-        "FROM trades WHERE market=%s AND symbol=%s AND position_side=%s ORDER BY trade_time ASC",
-        (anchor["market"], anchor["symbol"], anchor["position_side"]),
-    )
+        target_fills = []
+        for (market, symbol), group_fills in groups.items():
+            if market == anchor["market"] and symbol == anchor["symbol"]:
+                group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
+
+                # 重新執行狀態機，追蹤累積方向和 fills
+                cycle_fills = []
+                cum_qty = 0.0
+                curr_direction = None
+
+                for f in group_fills:
+                    side = f.get("side")
+                    qty = float(f.get("qty_base", 0))
+                    delta = qty if side == "BUY" else -qty
+                    new_cum_qty = cum_qty + delta
+
+                    if new_cum_qty > 1e-8:
+                        new_direction = "LONG"
+                    elif new_cum_qty < -1e-8:
+                        new_direction = "SHORT"
+                    else:
+                        new_direction = None
+
+                    direction_changed = (
+                        curr_direction is not None and
+                        new_direction is not None and
+                        curr_direction != new_direction
+                    )
+
+                    if direction_changed and cycle_fills:
+                        # 檢查這個 cycle 是否包含 trade_id
+                        if any(cf["trade_id"] == trade_id for cf in cycle_fills):
+                            target_fills = cycle_fills
+                            break
+                        cycle_fills = []
+
+                    cycle_fills.append(f)
+                    cum_qty = new_cum_qty
+                    if new_direction is not None:
+                        curr_direction = new_direction
+
+                # 如果還沒找到，檢查最後一個 cycle
+                if not target_fills and cycle_fills:
+                    if any(cf["trade_id"] == trade_id for cf in cycle_fills):
+                        target_fills = cycle_fills
+
+    # 如果仍無 fills，使用 target 的 num_fills 作為後備
+    if not target_fills:
+        target_fills = same_symbol[:target.get("num_fills", 1)]
 
     return {
         **target,
@@ -368,7 +441,7 @@ def position_detail(trade_id: int):
                 "fee_asset":    f["fee_asset"],
                 "trade_time":   int(f["trade_time"]),
             }
-            for f in fill_ids
+            for f in target_fills
         ],
     }
 
