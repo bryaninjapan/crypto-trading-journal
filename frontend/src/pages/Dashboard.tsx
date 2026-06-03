@@ -22,7 +22,7 @@ export function Dashboard() {
 
   const data = summary.data;
   const ana = analytics.data;
-  const pnl = data.kpi.usdm_realized_pnl;
+  const pnl = data.kpi.futures_realized_pnl;
   const curve = data.equity_curve;
 
   // 按市場分組餘額
@@ -134,7 +134,9 @@ export function Dashboard() {
                         <span className="text-right min-w-[30px]">{fmtNum(pct, 1)}%</span>
                       </div>
                     </td>
-                    <td className="px-lg py-2 text-right text-on-surface-variant">—</td>
+                    <td className="px-lg py-2 text-right text-on-surface-variant">
+                      {b.usd_value ? fmtNum(b.usd_value, 2) : "—"}
+                    </td>
                   </tr>
                 );
               })}

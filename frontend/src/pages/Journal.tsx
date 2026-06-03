@@ -58,36 +58,18 @@ export function Journal() {
                 key={`${s.market}-${s.symbol}`}
                 hover
                 className="!p-md cursor-pointer"
-                onClick={() => nav(`/journal?symbol=${s.symbol}`)}
+                onClick={() => nav(`/positions/${s.symbol}`)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="font-sans text-body-bold font-semibold">{s.symbol}</span>
                     <MarketBadge market={s.market} />
-                    {s.is_estimated && <EstimatedBadge />}
                   </div>
-                  <span className={`font-mono text-body-bold ${pnlClass(s.total_gain)}`}>
-                    {fmtPnl(s.total_gain, s.pnl_asset || "USDT")}
-                  </span>
                 </div>
-                <div className="mt-3 grid grid-cols-4 gap-2 font-mono text-data-mono text-on-surface-variant">
+                <div className="mt-3 font-mono text-data-mono text-on-surface-variant">
                   <div>
-                    <div className="text-[10px] uppercase">Trades</div>
-                    <div className="text-on-surface">{s.trades}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase">Win</div>
-                    <div className="text-on-surface">{fmtNum(s.win_rate)}%</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase">L / S</div>
-                    <div className="text-on-surface">
-                      {s.longs}/{s.shorts}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase">Avg Hold</div>
-                    <div className="text-on-surface">{fmtDuration(s.avg_hold_ms)}</div>
+                    <span className="text-[10px] uppercase">Trades: </span>
+                    <span className="text-on-surface">{s.trades}</span>
                   </div>
                 </div>
               </GlassCard>

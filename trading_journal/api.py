@@ -81,8 +81,12 @@ def summary():
     else:
         win_rate = 0.0
 
-    # USD-M PNL 合计
-    usdm_pnl = sum([float(t.get("realized_pnl", 0)) for t in trades if t.get("market") == "usdm"])
+    # 期货 PNL 合计（USDM + COINM）
+    futures_pnl = sum([
+        float(t.get("realized_pnl", 0))
+        for t in trades
+        if t.get("market") in ["usdm", "coinm"]
+    ])
 
     # 权益曲线（按交易时间的累积 PNL）
     equity_curve = []
@@ -101,42 +105,62 @@ def summary():
         client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
         balances = []
 
-        # 现货
+        # 获取 ticker prices（用于灰尘过滤）
+        try:
+            all_tickers = client.get_all_tickers()
+            prices = {p["symbol"]: float(p["price"]) for p in all_tickers}
+        except Exception as e:
+            print(f"[warn] 无法取 ticker prices: {e}")
+            prices = {}
+
+        # 现货（含灰尘过滤）
         spot_acc = client.get_account()
         for b in spot_acc.get("balances", []):
             free = float(b.get("free", 0))
             locked = float(b.get("locked", 0))
-            if free + locked > 0:
-                balances.append({
-                    "market": "spot",
-                    "asset": b["asset"],
-                    "free": free,
-                    "locked": locked,
-                    "balance": free + locked,
-                })
+            balance = free + locked
 
-        # USDM
+            if balance > 0:
+                # 计算 USD value（用于灰尘过滤）
+                symbol = f"{b['asset']}USDT"
+                price = prices.get(symbol, 0)
+                usd_value = balance * price
+
+                # ✅ 灰尘过滤：USD value >= 0.10
+                if usd_value >= 0.10:
+                    balances.append({
+                        "market": "spot",
+                        "asset": b["asset"],
+                        "free": free,
+                        "locked": locked,
+                        "balance": balance,
+                        "usd_value": round(usd_value, 2),
+                    })
+
+        # USDM（灰尘过滤）
         for b in client.futures_account_balance():
             balance = float(b.get("balance", 0))
-            if balance > 0:
+            if balance > 0.001:  # USDM 灰尘临界值
                 balances.append({
                     "market": "usdm",
                     "asset": b["asset"],
                     "free": balance,
                     "locked": 0.0,
                     "balance": balance,
+                    "usd_value": None,
                 })
 
-        # COINM
+        # COINM（灰尘过滤）
         for b in client.futures_coin_account_balance():
             balance = float(b.get("balance", 0))
-            if balance > 0:
+            if balance > 0.0001:  # COINM 灰尘临界值（更小）
                 balances.append({
                     "market": "coinm",
                     "asset": b["asset"],
                     "free": balance,
                     "locked": 0.0,
                     "balance": balance,
+                    "usd_value": None,
                 })
     except Exception as e:
         # 如果 API 失败，返回空列表
@@ -148,7 +172,7 @@ def summary():
         "kpi": {
             "total_positions": total_positions,
             "win_rate": round(win_rate, 2),
-            "usdm_realized_pnl": round(usdm_pnl, 2),
+            "futures_realized_pnl": round(futures_pnl, 2),
             "pnl_asset": "USDT",
         },
         "equity_curve": equity_curve,
@@ -173,9 +197,9 @@ def list_positions(
     trades = rows("SELECT * FROM trades ORDER BY trade_time DESC")
 
     all_positions = []
-    for idx, t in enumerate(trades):
+    for t in trades:
         pos = {
-            "id": idx + 1,
+            "id": t.get("trade_id"),
             "market": t.get("market"),
             "symbol": t.get("symbol"),
             "direction": "LONG" if t.get("side") == "BUY" else "SHORT",
@@ -213,79 +237,38 @@ def list_positions(
     return {"total": total, "limit": limit, "offset": offset, "positions": data}
 
 
-# ─── /api/positions/{id} ─────────────────────────────────────────────────────────
-@app.get("/api/positions/{pid}", dependencies=[Depends(auth)])
-def position_detail(pid: int):
-    # MOCK 數據用於前端驗證
-    import datetime
-    import random
-    random.seed(42 + pid)  # 每個位置有不同的種子
+# ─── /api/positions/{trade_id} ───────────────────────────────────────────────────
+@app.get("/api/positions/{trade_id}", dependencies=[Depends(auth)])
+def position_detail(trade_id: int):
+    # 从数据库查询真实交易数据
+    t = one(
+        "SELECT * FROM trades WHERE trade_id = %s",
+        (trade_id,)
+    )
+    if not t:
+        raise HTTPException(status_code=404, detail="Position not found")
 
-    symbols_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
-    markets_list = ["usdm", "usdm", "usdm", "coinm", "spot"]
-    directions_list = ["Long", "Short"]
-
-    sym_idx = (pid - 1) % len(symbols_list)
-    market = markets_list[sym_idx]
-    symbol = symbols_list[sym_idx]
-    direction = directions_list[(pid - 1) % 2]
-
-    base_date = datetime.datetime(2026, 1, 1)
-    open_ts = int((base_date + datetime.timedelta(days=(pid-1)//2)).timestamp() * 1000)
-    close_ts = open_ts + random.randint(3600000, 432000000)  # 1h to 5d
-
-    p = {
-        "id": pid,
+    return {
+        "id": t.get("trade_id"),
         "exchange": EXCHANGE,
-        "market": market,
-        "symbol": symbol,
-        "direction": direction,
-        "open_trade_id": 0,
-        "open_time": open_ts,
-        "close_time": close_ts,
-        "hold_ms": close_ts - open_ts,
-        "qty": round(random.uniform(0.01, 10), 2),
-        "avg_entry": round(random.uniform(1000, 50000), 2),
-        "avg_exit": round(random.uniform(1000, 50000), 2),
-        "realized_pnl": round(random.uniform(-500, 800), 2),
+        "market": t.get("market"),
+        "symbol": t.get("symbol"),
+        "direction": "LONG" if t.get("side") == "BUY" else "SHORT",
+        "open_trade_id": t.get("trade_id"),
+        "open_time": int(t.get("trade_time", 0)),
+        "close_time": int(t.get("trade_time", 0)),
+        "hold_ms": 0,
+        "qty": float(t.get("qty_base", 0)),
+        "avg_entry": float(t.get("price", 0)),
+        "avg_exit": float(t.get("price", 0)),
+        "realized_pnl": float(t.get("realized_pnl", 0)) if t.get("realized_pnl") else 0.0,
         "pnl_asset": "USDT",
         "is_estimated": False,
-        "fees": round(random.uniform(0.1, 10), 4),
-        "fee_asset": "USDT",
-        "funding": round(random.uniform(-5, 5), 6),
-        "num_fills": random.randint(1, 3),
-        "mae": round(random.uniform(-500, 0), 2),
-        "mfe": round(random.uniform(0, 500), 2),
-        "entry_quality": round(random.random(), 2),
-        "opportunity_capture": round(random.random(), 2),
-        "metrics_at": int(time.time() * 1000),
-        "close_price_usd": round(random.uniform(90000, 100000), 2) if market == "coinm" else None,
+        "fees": float(t.get("fee", 0)) if t.get("fee") else 0.0,
+        "fee_asset": t.get("fee_asset") or "USDT",
+        "funding": 0.0,
+        "num_fills": 1,
     }
-
-    # 生成 fills 數據
-    num_fills = p["num_fills"]
-    fills = []
-    current_qty = 0
-    for fill_idx in range(num_fills):
-        fill_qty = p["qty"] / num_fills
-        side = "BUY" if direction == "Long" else "SELL"
-        if fill_idx == num_fills - 1:  # 最後一筆平倉
-            side = "SELL" if direction == "Long" else "BUY"
-
-        fill_time = open_ts + (close_ts - open_ts) * fill_idx // num_fills
-        fills.append({
-            "trade_id": pid * 100 + fill_idx,
-            "side": side,
-            "price": p["avg_entry"] if side == "BUY" else p["avg_exit"],
-            "qty_base": round(fill_qty, 6),
-            "realized_pnl": round(p["realized_pnl"] / num_fills, 2) if fill_idx == num_fills - 1 else 0,
-            "fee": round(p["fees"] / num_fills, 6),
-            "fee_asset": "USDT",
-            "trade_time": fill_time,
-        })
-
-    p["fills"] = fills
-    return p
 
 
 # ─── /api/positions/{id}/klines ──────────────────────────────────────────────────
@@ -382,8 +365,8 @@ def position_mae_mfe_timeline(pid: int):
 # ─── /api/analytics ──────────────────────────────────────────────────────────────
 @app.get("/api/analytics", dependencies=[Depends(auth)])
 def analytics(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
-    # 从数据库查询真实交易数据（不按市场过滤，因为数据都在 spot）
-    trades = rows("SELECT * FROM trades ORDER BY trade_time ASC")
+    # 严格按 market 过滤交易
+    trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC", (market,))
 
     total_trades = len(trades)
     total_pnl = sum([float(t.get("realized_pnl", 0)) for t in trades])
@@ -511,83 +494,24 @@ def reports(market: str = Query("usdm", pattern="^(usdm|coinm|spot)$")):
 # ─── /api/symbols ────────────────────────────────────────────────────────────────
 @app.get("/api/symbols", dependencies=[Depends(auth)])
 def symbols(market: str = Query(None, pattern="^(spot|usdm|coinm)$")):
-    # MOCK 數據用於前端驗證
-    mock_symbols = [
-        {
-            "market": "usdm",
-            "symbol": "BTCUSDT",
-            "trades": 28,
-            "wins": 18,
-            "longs": 15,
-            "shorts": 13,
-            "total_gain": 2850.50,
-            "win_rate": 64.29,
-            "avg_hold_ms": 86400000,
-            "pnl_asset": "USDT",
-            "is_estimated": False,
-        },
-        {
-            "market": "usdm",
-            "symbol": "ETHUSDT",
-            "trades": 32,
-            "wins": 19,
-            "longs": 18,
-            "shorts": 14,
-            "total_gain": 1950.75,
-            "win_rate": 59.38,
-            "avg_hold_ms": 72000000,
-            "pnl_asset": "USDT",
-            "is_estimated": False,
-        },
-        {
-            "market": "usdm",
-            "symbol": "BNBUSDT",
-            "trades": 24,
-            "wins": 16,
-            "longs": 12,
-            "shorts": 12,
-            "total_gain": 1200.25,
-            "win_rate": 66.67,
-            "avg_hold_ms": 108000000,
-            "pnl_asset": "USDT",
-            "is_estimated": False,
-        },
-        {
-            "market": "coinm",
-            "symbol": "ADAUSDT",
-            "trades": 45,
-            "wins": 26,
-            "longs": 22,
-            "shorts": 23,
-            "total_gain": 450.50,
-            "win_rate": 57.78,
-            "avg_hold_ms": 54000000,
-            "pnl_asset": "USDT",
-            "is_estimated": False,
-        },
-        {
-            "market": "spot",
-            "symbol": "XRPUSDT",
-            "trades": 27,
-            "wins": 19,
-            "longs": 27,
-            "shorts": 0,
-            "total_gain": 550.75,
-            "win_rate": 70.37,
-            "avg_hold_ms": 180000000,
-            "pnl_asset": "USDT",
-            "is_estimated": False,
-        },
-    ]
-
-    # Filter by market
+    # 从数据库查询实际交易过的符号（动态）
     if market:
-        mock_symbols = [s for s in mock_symbols if s["market"] == market]
+        trades = rows(
+            "SELECT DISTINCT symbol, market, COUNT(*) as count FROM trades WHERE market = %s GROUP BY symbol ORDER BY count DESC",
+            (market,)
+        )
+    else:
+        trades = rows(
+            "SELECT DISTINCT symbol, market, COUNT(*) as count FROM trades GROUP BY symbol ORDER BY count DESC"
+        )
 
-    # Sort by trades descending
-    mock_symbols.sort(key=lambda x: x["trades"], reverse=True)
-
-    return {"symbols": mock_symbols}
+    # 转换格式供前端消费
+    return {
+        "symbols": [
+            {"symbol": t["symbol"], "market": t["market"], "trades": t["count"]}
+            for t in trades
+        ]
+    }
 
 
 @app.get("/api/health")
