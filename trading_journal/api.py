@@ -363,6 +363,18 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     short_wins_pnl = sum([float(t.get("realized_pnl", 0)) for t in short_trades if float(t.get("realized_pnl", 0)) > 0]) or 0.01
     short_losses_pnl = sum([float(t.get("realized_pnl", 0)) for t in short_trades if float(t.get("realized_pnl", 0)) < 0]) or -0.01
 
+    # 最大连胜/连败（按时间顺序遍历有 PNL 的交易）
+    max_consec_win = max_consec_loss = cur_win = cur_loss = 0
+    for t in pnl_trades:
+        if float(t.get("realized_pnl", 0)) > 0:
+            cur_win += 1
+            cur_loss = 0
+            max_consec_win = max(max_consec_win, cur_win)
+        else:
+            cur_loss += 1
+            cur_win = 0
+            max_consec_loss = max(max_consec_loss, cur_loss)
+
     return {
         "market": market,
         "kpi": {
@@ -384,6 +396,8 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
             "avg_trade_win": round(long_wins_pnl / long_wins if long_wins > 0 else 0, 2),
             "avg_trade_loss": round(long_losses_pnl / long_losses if long_losses > 0 else 0, 2),
             "largest_losses": round(min([float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) < 0], default=0), 2),
+            "max_consecutive_win": max_consec_win,
+            "max_consecutive_loss": max_consec_loss,
         },
         "longs": {
             "count": len(long_trades),
