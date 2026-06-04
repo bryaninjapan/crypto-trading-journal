@@ -335,7 +335,42 @@ def build_positions_from_fills(fills):
 
         # 佇列殘餘 = 未平倉，刻意不產生 closed trade
 
-    return positions
+    return _merge_same_roundtrip(positions)
+
+
+def _merge_same_roundtrip(positions):
+    """FIFO 後的二次去重：同一張開倉單被多張平倉單（同價、同毫秒）平掉時，FIFO 會
+    把該開倉單拆給每張平倉單，產生多筆 open/close 的 time+price 完全相同、只有 qty
+    不同的段（例 METISUSDT 一張 4.0 開倉單被兩張 @9.86 同毫秒平倉單平掉 → 兩段）。
+    這在 UI 上與 fill 切片重複無異，故依 (market, symbol, direction, open_time,
+    avg_entry, close_time, avg_exit, is_orphan_close) 合併成一筆：qty/realized_pnl/
+    fees 加總，fills 去重（共用的開倉單只算一次），id 取最小者（deterministic，
+    detail 端點重跑同一流程可重現）。FIFO 配對本身完全不動。
+    """
+    from collections import OrderedDict
+
+    merged = OrderedDict()
+    for p in positions:
+        key = (p["market"], p["symbol"], p["direction"], p["open_time"],
+               p.get("avg_entry"), p["close_time"], p.get("avg_exit"),
+               p.get("is_orphan_close"))
+        if key not in merged:
+            merged[key] = p
+            continue
+        m = merged[key]
+        m["qty"]          = round(m["qty"] + p["qty"], 8)
+        m["realized_pnl"] = round(m["realized_pnl"] + p["realized_pnl"], 6)
+        m["fees"]         = round(m["fees"] + p["fees"], 8)
+        m["id"]           = min(m["id"], p["id"])
+        seen = {f.get("id") for f in m["fills"]}
+        for f in p["fills"]:                      # 共用開倉單在多段重複，依 row id 去重
+            if f.get("id") not in seen:
+                m["fills"].append(f)
+                seen.add(f.get("id"))
+        m["fills"].sort(key=lambda f: (f.get("trade_time", 0), f.get("id", 0)))
+        m["num_fills"] = len(m["fills"])
+
+    return list(merged.values())
 
 
 # ─── /api/summary ──────────────────────────────────────────────────────────────
