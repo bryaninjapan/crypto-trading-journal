@@ -568,50 +568,96 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     # 严格按 market 过滤交易
     trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC, id ASC", (market,))
 
-    total_trades = len(trades)
-    total_pnl = sum(float(t.get("realized_pnl", 0)) for t in trades)
+    # ── 單一事實來源：聚合後 positions（回合）──
+    # 所有 Long/Short 與勝負統計都以 position 級計算。原先 fill 級路徑（按 DB 的
+    # position_side 欄位分桶 + 用每筆 fill 的 realized_pnl 數勝負）有兩個 bug：
+    #   1) count 用 position 級、W/L 用 fill 級 → 一個回合多筆平倉 fill 會貢獻多個
+    #      W/L，wins+losses 永遠對不上 count；
+    #   2) count 的方向來自 build_positions_from_fills 依首筆 fill side 推斷，W/L 的
+    #      方向來自 DB 的 position_side 欄位——COIN-M 的 position_side 幾乎全是 SHORT，
+    #      導致多頭回合的 fill 全落進 SHORT 桶（LONG 0W0L、SHORT 塞爆）。
+    # 改為：方向一律用 position 的 direction，勝負一律看 position 淨 realized_pnl 正負。
+    agg_positions = build_positions_from_fills(trades)
 
-    # Step 2 fix: 按 position_side 分類（不是 side）
-    # SHORT position: position_side=="SHORT"；opening fill=SELL, closing fill=BUY
-    # LONG  position: position_side=="LONG"；opening fill=BUY,  closing fill=SELL
-    long_trades  = [t for t in trades if t.get("position_side") == "LONG"]
-    short_trades = [t for t in trades if t.get("position_side") == "SHORT"]
-    # fallback（無 position_side 的舊資料）
-    if not long_trades and not short_trades:
-        long_trades  = [t for t in trades if t.get("side") == "BUY"]
-        short_trades = [t for t in trades if t.get("side") == "SELL"]
+    # ── Binance 现价：COIN-M position realized_pnl → USD 换算 ──
+    # build_positions_from_fills 產出的 position realized_pnl 是各 fill realized_pnl
+    # 的原始計價單位直接相加：USD-M 為 USDT，COIN-M 為標的币（ADA/BTC 顆數）。
+    # 與 /api/summary（見 DECISION-LOG-coinm-pnl-usd）一致，COIN-M 需乘現價換算成 USD
+    # 後才能比較/累加。勝負分類只看正負號，換算乘正數現價不改變符號，故方向桶歸屬不受影響；
+    # 但 avg_win/avg_loss/total_realized_pnl 的「金額」必須換算才有物理意義。
+    prices = {}
+    if market == "coinm":
+        from binance.client import Client
+        try:
+            client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
+            prices = {t["symbol"]: float(t["price"]) for t in client.get_all_tickers()}
+        except Exception as e:
+            print(f"[warning] analytics 无法从 Binance 获取价格: {e}")
 
-    # 勝負統計：只看有 PNL 的 fill（closing fills）
-    pnl_trades = [t for t in trades if float(t.get("realized_pnl", 0)) != 0]
-    wins   = len([t for t in pnl_trades if float(t.get("realized_pnl", 0)) > 0])
-    losses = len([t for t in pnl_trades if float(t.get("realized_pnl", 0)) < 0])
+    def net_pnl(p):
+        """position 淨 realized_pnl，換算為 USD。
+        usdm → 已是 USDT 原樣返回；coinm → 乘標的币現價；
+        缺現價返回 None（該 position 排除統計，不把币本位數量混進 USD 合計）。"""
+        pnl = float(p.get("realized_pnl") or 0)
+        if market == "usdm":
+            return pnl
+        coin = p.get("pnl_asset") or p.get("symbol", "").replace("USD_PERP", "").replace("USD", "")
+        price = prices.get(f"{coin}USDT") if coin else None
+        return pnl * price if price is not None else None
+
+    # 每個 position 的淨 PnL（USD）；None=缺現價，排除
+    pos_pnls = [(p, net_pnl(p)) for p in agg_positions]
+    pos_pnls = [(p, v) for (p, v) in pos_pnls if v is not None]
+
+    # 頂層勝負（position 級）：淨 PnL >0 勝、<0 負、==0 不計
+    decided = [(p, v) for (p, v) in pos_pnls if v != 0]
+    wins   = len([1 for (_, v) in decided if v > 0])
+    losses = len([1 for (_, v) in decided if v < 0])
     win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
 
-    # 多頭統計（按 position_side=LONG）
-    long_pnl_trades  = [t for t in long_trades  if float(t.get("realized_pnl", 0)) != 0]
-    long_pnl         = sum(float(t.get("realized_pnl", 0)) for t in long_trades)
-    long_wins        = len([t for t in long_pnl_trades if float(t.get("realized_pnl", 0)) > 0])
-    long_losses      = len([t for t in long_pnl_trades if float(t.get("realized_pnl", 0)) < 0])
-    long_wins_pnl    = sum(float(t.get("realized_pnl", 0)) for t in long_pnl_trades if float(t.get("realized_pnl", 0)) > 0) or 0.01
-    long_losses_pnl  = sum(float(t.get("realized_pnl", 0)) for t in long_pnl_trades if float(t.get("realized_pnl", 0)) < 0) or -0.01
+    total_pnl = sum(v for (_, v) in pos_pnls)
 
-    # 空頭統計（按 position_side=SHORT）
-    short_pnl_trades = [t for t in short_trades if float(t.get("realized_pnl", 0)) != 0]
-    short_pnl        = sum(float(t.get("realized_pnl", 0)) for t in short_trades)
-    short_wins       = len([t for t in short_pnl_trades if float(t.get("realized_pnl", 0)) > 0])
-    short_losses     = len([t for t in short_pnl_trades if float(t.get("realized_pnl", 0)) < 0])
-    short_wins_pnl   = sum(float(t.get("realized_pnl", 0)) for t in short_pnl_trades if float(t.get("realized_pnl", 0)) > 0) or 0.01
-    short_losses_pnl = sum(float(t.get("realized_pnl", 0)) for t in short_pnl_trades if float(t.get("realized_pnl", 0)) < 0) or -0.01
+    def direction_stats(direction):
+        """某方向（"Long"/"Short"）的 position 級統計。"""
+        items     = [(p, v) for (p, v) in pos_pnls if p["direction"] == direction]
+        win_pnls  = [v for (_, v) in items if v > 0]
+        loss_pnls = [v for (_, v) in items if v < 0]
+        nw, nl = len(win_pnls), len(loss_pnls)
+        return {
+            # count 含缺現價被排除者，故恆有 wins+losses ≤ count
+            "count": len([p for p in agg_positions if p["direction"] == direction]),
+            "win_ratio": round(nw / (nw + nl) * 100, 2) if (nw + nl) > 0 else 0,
+            "wins": nw,
+            "losses": nl,
+            "avg_duration_ms": avg_hold_ms,
+            "total_realized_pnl": round(sum(v for (_, v) in items), 2),
+            "avg_win": round(sum(win_pnls) / nw, 2) if nw > 0 else 0,
+            "avg_loss": round(sum(loss_pnls) / nl, 2) if nl > 0 else 0,
+        }
 
     # 平均持倉時間：從聚合後 positions 計算
-    agg_positions = build_positions_from_fills(trades)
     closed_positions = [p for p in agg_positions if p.get("hold_ms") is not None]
     avg_hold_ms = int(sum(p["hold_ms"] for p in closed_positions) / len(closed_positions)) if closed_positions else 0
 
-    # 最大連勝/連敗（按時間順序遍歷有 PNL 的 fill）
+    long_stats  = direction_stats("Long")
+    short_stats = direction_stats("Short")
+
+    # 頂層平均盈虧（position 級，USD）
+    all_win_pnls  = [v for (_, v) in decided if v > 0]
+    all_loss_pnls = [v for (_, v) in decided if v < 0]
+    avg_trade_win  = round(sum(all_win_pnls)  / len(all_win_pnls),  2) if all_win_pnls  else 0
+    avg_trade_loss = round(sum(all_loss_pnls) / len(all_loss_pnls), 2) if all_loss_pnls else 0
+    largest_gain   = round(max(all_win_pnls,  default=0), 2)
+    largest_losses = round(min(all_loss_pnls, default=0), 2)
+
+    # 最大連勝/連敗（按回合完成時間順序遍歷有勝負的 position）
+    # agg_positions 是按 (market,symbol) 分組產出、非全域時間序，故先按 close_time 排序。
+    streak_positions = sorted(
+        decided, key=lambda pv: (pv[0].get("close_time") or pv[0].get("open_time") or 0)
+    )
     max_consec_win = max_consec_loss = cur_win = cur_loss = 0
-    for t in pnl_trades:
-        if float(t.get("realized_pnl", 0)) > 0:
+    for (_, v) in streak_positions:
+        if v > 0:
             cur_win += 1; cur_loss = 0
             max_consec_win = max(max_consec_win, cur_win)
         else:
@@ -654,35 +700,17 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
             "trade_expectancy": round(total_pnl / len(agg_positions) if agg_positions else 0, 2),
             "avg_daily_gain": round(total_pnl / time_span_days, 2),
             "avg_daily_volume": round(avg_daily_volume, 2),
-            "largest_gain": round(max((float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) > 0), default=0), 2),
+            "largest_gain": largest_gain,
             "total_trades_volume": round(total_trades_volume, 2),
             "avg_trades_per_day": round(len(agg_positions) / time_span_days, 2),
-            "avg_trade_win": round((long_wins_pnl + short_wins_pnl - 0.02) / (long_wins + short_wins) if (long_wins + short_wins) > 0 else 0, 2),
-            "avg_trade_loss": round((long_losses_pnl + short_losses_pnl + 0.02) / (long_losses + short_losses) if (long_losses + short_losses) > 0 else 0, 2),
-            "largest_losses": round(min((float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) < 0), default=0), 2),
+            "avg_trade_win": avg_trade_win,
+            "avg_trade_loss": avg_trade_loss,
+            "largest_losses": largest_losses,
             "max_consecutive_win": max_consec_win,
             "max_consecutive_loss": max_consec_loss,
         },
-        "longs": {
-            "count": len([p for p in agg_positions if p["direction"] == "Long"]),
-            "win_ratio": round(long_wins / (long_wins + long_losses) * 100 if (long_wins + long_losses) > 0 else 0, 2),
-            "wins": long_wins,
-            "losses": long_losses,
-            "avg_duration_ms": avg_hold_ms,
-            "total_realized_pnl": round(long_pnl, 2),
-            "avg_win": round(long_wins_pnl / long_wins if long_wins > 0 else 0, 2),
-            "avg_loss": round(long_losses_pnl / long_losses if long_losses > 0 else 0, 2),
-        },
-        "shorts": {
-            "count": len([p for p in agg_positions if p["direction"] == "Short"]),
-            "win_ratio": round(short_wins / (short_wins + short_losses) * 100 if (short_wins + short_losses) > 0 else 0, 2),
-            "wins": short_wins,
-            "losses": short_losses,
-            "avg_duration_ms": avg_hold_ms,
-            "total_realized_pnl": round(short_pnl, 2),
-            "avg_win": round(short_wins_pnl / short_wins if short_wins > 0 else 0, 2),
-            "avg_loss": round(short_losses_pnl / short_losses if short_losses > 0 else 0, 2),
-        },
+        "longs": long_stats,
+        "shorts": short_stats,
         "pnl_asset": "USDT",
     }
 
