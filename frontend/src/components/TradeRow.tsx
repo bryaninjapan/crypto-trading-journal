@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Position } from "../api/types";
 import { DirectionBadge } from "./Badge";
-import { fmtNum, fmtPnl, fmtTime, fmtDuration, pnlClass } from "../lib/format";
+import { fmtNum, fmtPnlWithUsd, fmtTime, fmtDuration, pnlClass } from "../lib/format";
 
 export function TradeRow({ position, rowNum }: { position: Position; rowNum: number }) {
   const nav = useNavigate();
@@ -48,7 +48,7 @@ export function TradeRow({ position, rowNum }: { position: Position; rowNum: num
 
       {/* Realized PNL */}
       <td className={`px-lg py-2 text-right text-data-mono text-xs font-semibold ${pnlClass(position.realized_pnl)}`}>
-        {fmtPnl(position.realized_pnl, position.pnl_asset || "USDT")}
+        {fmtPnlWithUsd(position.realized_pnl, position.pnl_asset || "USDT", position.realized_pnl_usd)}
       </td>
     </tr>
   );

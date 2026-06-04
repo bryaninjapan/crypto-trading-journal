@@ -8651,6 +8651,12 @@ function fmtPnl(n2, asset = "USDT") {
   const suffix = asset && asset !== "USDT" ? ` ${asset}` : "";
   return `${sign}${unit}${fmtNum(n2, asset === "USDT" ? 2 : 6)}${suffix}`;
 }
+function fmtPnlWithUsd(n2, asset = "USDT", pnlUsd) {
+  const base = fmtPnl(n2, asset);
+  if (asset === "USDT" || pnlUsd === null || pnlUsd === void 0) return base;
+  const sign = pnlUsd > 0 ? "+" : pnlUsd < 0 ? "-" : "";
+  return `${base} (≈ ${sign}$${fmtNum(Math.abs(pnlUsd), 2)})`;
+}
 function fmtDuration(ms) {
   if (!ms) return "—";
   const s = Math.floor(ms / 1e3);
@@ -8932,7 +8938,7 @@ function TradeRow({ position, rowNum }) {
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface", children: fmtNum(position.avg_exit, 6) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface-variant text-[10px]", children: fmtTime(position.close_time) })
         ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-on-surface-variant", children: "—" }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: `px-lg py-2 text-right text-data-mono text-xs font-semibold ${pnlClass(position.realized_pnl)}`, children: fmtPnl(position.realized_pnl, position.pnl_asset || "USDT") })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: `px-lg py-2 text-right text-data-mono text-xs font-semibold ${pnlClass(position.realized_pnl)}`, children: fmtPnlWithUsd(position.realized_pnl, position.pnl_asset || "USDT", position.realized_pnl_usd) })
       ]
     }
   );
@@ -8941,12 +8947,19 @@ const MARKETS = ["", "usdm", "coinm"];
 function Journal() {
   var _a, _b;
   const [market, setMarket] = reactExports.useState("");
+  const [symbol, setSymbol] = reactExports.useState("");
   const [limit, setLimit] = reactExports.useState(20);
   const [offset, setOffset] = reactExports.useState(0);
   const symbols = useApi(() => api.symbols(market || void 0), [market]);
   const positions = useApi(
-    () => api.positions({ market: market || void 0, status: "closed", limit, offset }),
-    [market, limit, offset]
+    () => api.positions({
+      market: market || void 0,
+      symbol: symbol || void 0,
+      status: "closed",
+      limit,
+      offset
+    }),
+    [market, symbol, limit, offset]
   );
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-lg", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
@@ -8956,7 +8969,7 @@ function Journal() {
         {
           onClick: () => setMarket(m2),
           className: `rounded-full px-3 py-1 text-data-mono transition-colors ${market === m2 ? "bg-primary/20 text-primary" : "text-on-surface-variant"}`,
-          children: m2 === "" ? "All" : m2 === "usdm" ? "USD-M" : m2 === "coinm" ? "COIN-M" : "Spot"
+          children: m2 === "" ? "All" : m2 === "usdm" ? "USD-M" : "COIN-M"
         },
         m2 || "all"
       )) })
@@ -8967,10 +8980,11 @@ function Journal() {
         GlassCard,
         {
           hover: true,
-          className: "!p-md cursor-pointer",
+          className: `!p-md cursor-pointer ${symbol === s.symbol ? "ring-1 ring-primary/60" : ""}`,
           onClick: () => {
             setMarket(s.market === "usdm" ? "usdm" : s.market === "coinm" ? "coinm" : "");
-            window.location.hash = `#symbol=${s.symbol}`;
+            setSymbol(s.symbol);
+            setOffset(0);
           },
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-between", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
@@ -8987,7 +9001,24 @@ function Journal() {
       )) })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "space-y-sm", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-label-caps uppercase text-on-surface-variant", children: "Trade History" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-label-caps uppercase text-on-surface-variant", children: "Trade History" }),
+        symbol && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/15 px-2 py-0.5 text-data-mono text-primary", children: [
+          symbol,
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: () => {
+                setSymbol("");
+                setOffset(0);
+              },
+              "aria-label": "清除 symbol 篩選",
+              className: "transition-colors hover:text-on-surface",
+              children: "✕"
+            }
+          )
+        ] })
+      ] }),
       positions.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx(Loading, {}) : positions.error ? /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBlock, { error: positions.error }) : !((_b = positions.data) == null ? void 0 : _b.positions.length) ? /* @__PURE__ */ jsxRuntimeExports.jsx(Empty, {}) : /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-0 overflow-hidden", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: "w-full text-data-mono text-xs md:text-sm", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("thead", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: "border-b border-white/[0.06] text-on-surface-variant", children: [
@@ -9135,7 +9166,14 @@ function PositionDetail() {
         p2.close_price_usd && /* @__PURE__ */ jsxRuntimeExports.jsx(Row$1, { label: "Close Price USD", value: `$${fmtNum(p2.close_price_usd, 2)}` }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-headline-md font-bold", children: "Realised PNL" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `font-mono text-headline-md ${pnlClass(p2.realized_pnl)}`, children: fmtPnl(p2.realized_pnl, p2.pnl_asset || "USDT") })
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "span",
+            {
+              className: `font-mono text-headline-md ${pnlClass(p2.realized_pnl)}`,
+              title: p2.pnl_asset && p2.pnl_asset !== "USDT" && p2.realized_pnl_usd != null ? "USD 以现价估算，非成交当时价" : void 0,
+              children: fmtPnlWithUsd(p2.realized_pnl, p2.pnl_asset || "USDT", p2.realized_pnl_usd)
+            }
+          )
         ] })
       ] })
     ] }),

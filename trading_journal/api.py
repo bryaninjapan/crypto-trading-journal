@@ -65,6 +65,44 @@ def cumsum(series):
     return out
 
 
+# ─── Binance 现价 / PNL → USD 换算（summary / positions / detail 共用）──────────
+def _binance_client():
+    """创建 Binance client；缺 key 或失败时返回 None。"""
+    from binance.client import Client
+    try:
+        return Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
+    except Exception as e:
+        print(f"[warning] 无法创建 Binance client: {e}")
+        return None
+
+
+def _load_prices(client=None):
+    """返回 {symbol: price} 现价表；失败返回 {}。
+    可传入已建好的 client 复用（如 summary 还要用 client 查余额）。"""
+    try:
+        client = client or _binance_client()
+        if client is None:
+            return {}
+        return {t["symbol"]: float(t["price"]) for t in client.get_all_tickers()}
+    except Exception as e:
+        print(f"[warning] 无法从 Binance 获取价格: {e}")
+        return {}
+
+
+def _pnl_to_usd(pnl, asset, prices):
+    """把以 `asset` 计价的金额换算成 USD。
+    USDT → 已是 USD，原样返回；其他（COIN-M 的 ADA/BTC…）→ 乘以 {asset}USDT 现价。
+    缺现价时返回 None（宁可不显示 USD，也不混入币本位数量）。
+    注：用「现价」近似换算，非成交当时价（沿用 summary 的近似口径）。"""
+    if pnl is None:
+        return None
+    pnl = float(pnl)
+    if not asset or asset == "USDT":
+        return round(pnl, 2)
+    price = prices.get(f"{asset}USDT")
+    return round(pnl * price, 2) if price is not None else None
+
+
 # ─── Position Aggregation (fills → positions) ─────────────────────────────────
 def _build_one_position(market, symbol, pos_side, fills):
     """把同一 position cycle 的 fills 組成一個 position dict。"""
@@ -228,22 +266,11 @@ def summary():
     #   没有物理意义）。必须先把 COIN-M 用标的币现价换算成 USD 再累加。
     # 注：用「现价」近似换算，非成交当时价。精确版需按 trade_time 取历史 kline，
     #     留作后续迭代（见 decision-log）。
-    from binance.client import Client
-    prices = {}
-    client = None
-    try:
-        client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
-        prices = {t["symbol"]: float(t["price"]) for t in client.get_all_tickers()}
-    except Exception as e:
-        print(f"[warning] 无法从 Binance 获取价格: {e}")
+    client = _binance_client()
+    prices = _load_prices(client)
 
     def to_usd(asset: str, amount: float) -> float | None:
-        if asset == "USDT":
-            return round(amount, 2)
-        pair = f"{asset}USDT"
-        if pair in prices:
-            return round(amount * prices[pair], 2)
-        return None
+        return _pnl_to_usd(amount, asset, prices)
 
     def realized_pnl_usd(trade) -> float | None:
         """单笔期货 fill 的 realized_pnl 换算成 USD。
@@ -256,8 +283,7 @@ def summary():
             return pnl
         if market == "coinm":
             coin = trade.get("margin_asset") or trade.get("symbol", "").replace("USD_PERP", "")
-            price = prices.get(f"{coin}USDT") if coin else None
-            return pnl * price if price is not None else None
+            return _pnl_to_usd(pnl, coin, prices)
         return None
 
     # ── 期货 PNL 合计 + 权益曲线（均换算为 USD 后累加）──
@@ -368,6 +394,12 @@ def list_positions(
     total = len(all_positions)
     data  = all_positions[offset:offset + limit]
 
+    # COIN-M 的 realized_pnl 以标的币（pnl_asset，如 ADA/BTC）计价，附带换算好的
+    # USD 估值供前端并排显示；USDM 已是 USD。仅对当前页换算，省一次大批量计算。
+    prices = _load_prices()
+    for p in data:
+        p["realized_pnl_usd"] = _pnl_to_usd(p.get("realized_pnl"), p.get("pnl_asset"), prices)
+
     return {"total": total, "limit": limit, "offset": offset, "positions": data}
 
 
@@ -451,6 +483,12 @@ def position_detail(trade_id: int):
     # 如果仍無 fills，使用 target 的 num_fills 作為後備
     if not target_fills:
         target_fills = same_symbol[:target.get("num_fills", 1)]
+
+    # COIN-M 的 realized_pnl 以标的币计价，附带 USD 估值供前端并排显示。
+    prices = _load_prices()
+    target["realized_pnl_usd"] = _pnl_to_usd(
+        target.get("realized_pnl"), target.get("pnl_asset"), prices
+    )
 
     return {
         **target,

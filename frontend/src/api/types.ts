@@ -14,6 +14,7 @@ export interface Position {
   avg_entry: number | null;
   avg_exit: number | null;
   realized_pnl: number | null;
+  realized_pnl_usd?: number | null;
   pnl_asset: string | null;
   is_estimated: boolean;
   fees: number | null;

@@ -6,7 +6,7 @@ import { FillsTable } from "../components/FillsTable";
 import { DirectionBadge, MarketBadge } from "../components/Badge";
 import { Gauge } from "../components/Gauge";
 import { Loading, ErrorBlock } from "../components/StateBlock";
-import { fmtPnl, fmtNum, fmtDuration, fmtTime, pnlClass } from "../lib/format";
+import { fmtPnlWithUsd, fmtNum, fmtDuration, fmtTime, pnlClass } from "../lib/format";
 
 export function PositionDetail() {
   const { id } = useParams();
@@ -54,8 +54,15 @@ export function PositionDetail() {
           )}
           <div className="flex items-center justify-between">
             <span className="font-sans text-headline-md font-bold">Realised PNL</span>
-            <span className={`font-mono text-headline-md ${pnlClass(p.realized_pnl)}`}>
-              {fmtPnl(p.realized_pnl, p.pnl_asset || "USDT")}
+            <span
+              className={`font-mono text-headline-md ${pnlClass(p.realized_pnl)}`}
+              title={
+                p.pnl_asset && p.pnl_asset !== "USDT" && p.realized_pnl_usd != null
+                  ? "USD 以现价估算，非成交当时价"
+                  : undefined
+              }
+            >
+              {fmtPnlWithUsd(p.realized_pnl, p.pnl_asset || "USDT", p.realized_pnl_usd)}
             </span>
           </div>
         </div>
