@@ -103,148 +103,179 @@ def _pnl_to_usd(pnl, asset, prices):
     return round(pnl * price, 2) if price is not None else None
 
 
-# ─── Position Aggregation (fills → positions) ─────────────────────────────────
-def _infer_pos_side(cycle_fills):
-    """判定一個 cycle 的多空方向。
+# ─── Position Aggregation (fills → trades，FIFO 配對) ──────────────────────────
+# 模型（對標 CoinMarketMan）：把每個平倉 fill 依 FIFO 與最早的開倉 fill 配對，每一段
+# 「一個開倉 fill × 一個平倉 fill」的配對量 = 一筆已平交易（closed trade）。CMM 實測：
+# trade #376 = SELL@75934.7(27/May 開空) + BUY@73405.3(30/May 平空)，open 永遠早於 close。
+#
+# 為什麼改掉舊的「累積 qty 歸零」狀態機（解掉 4 個症狀）：
+#   1) 絕對 tolerance 1e-3 對不同幣量級失效：BTCUSD（qty 0.001~0.04）被亂切成 7 個錯誤
+#      position；ADAUSD（qty 39~9770）一次都切不動，70 筆全黏成 1 坨。
+#   2) 把「平掉舊單(BUY) + 開新單(SELL)」黏成同一假 position → open_time(開倉 SELL) 晚於
+#      close_time(平倉 BUY) = 時光穿越（7 個 BTCUSD position 全穿越）。
+#   3) PNL 出現在時間序第一筆（其實是平倉），看起來像開倉就有 PNL。
+#   4) 未平倉殘量被當成假交易混進清單。
+# FIFO 模型天然保證 open_time ≤ close_time（被配對的開倉 lot 必早於平倉 fill 進佇列），
+# 且與幣量級無關。
+#
+# 方向（多空）一律採用 Binance 權威欄位 position_side（commit cbba99f）：
+#   SHORT 倉：SELL=開倉、BUY=平倉；LONG 倉：BUY=開倉、SELL=平倉。
+# 只有 position_side 缺失 / BOTH（USDM 單向模式舊資料）時，才退回依當前淨部位推斷。
 
-    優先採用 Binance 提供的權威欄位 position_side：COIN-M（雙向持倉）一定帶
-    "LONG"/"SHORT"，直接採用即正確。只有當該欄位全為空 / "BOTH"（USDM 單向
-    模式的舊資料）時，才退回「第一筆 fill 的 side」啟發式。
 
-    舊啟發式對 COIN-M 空單會誤判：空單生命週期是 SELL 開倉 → BUY 平倉，但抓取
-    窗口常從平倉的 BUY 開始，第一筆是 BUY → 誤判成 LONG。改用 position_side 後
-    不再翻轉。
+def _seg_float(v):
+    return float(v) if v is not None else 0.0
+
+
+def _classify(fill, books):
+    """判定一筆 fill 屬於哪個 book（LONG/SHORT）以及是開倉還是平倉。
+
+    優先用 position_side；缺失 / BOTH 時（單向模式舊資料）依當前佇列淨部位推斷：
+    BUY 先平 SHORT 否則開 LONG；SELL 先平 LONG 否則開 SHORT。
+    回傳 (book, is_open)。
     """
-    for f in cycle_fills:
-        ps = f.get("position_side")
-        if ps and ps != "BOTH":
-            return "SHORT" if ps == "SHORT" else "LONG"
-    # USDM 單向模式舊資料：position_side 全為空 / BOTH，退回 side 啟發式
-    return "LONG" if cycle_fills[0].get("side") == "BUY" else "SHORT"
+    side = fill.get("side")
+    ps = fill.get("position_side")
+    if ps in ("LONG", "SHORT"):
+        is_open = (ps == "LONG" and side == "BUY") or (ps == "SHORT" and side == "SELL")
+        return ps, is_open
+    # 單向模式 fallback（本資料集無此情形，保留以防未來 BOTH/NULL 資料）
+    if side == "BUY":
+        return ("SHORT", False) if books["SHORT"] else ("LONG", True)
+    return ("LONG", False) if books["LONG"] else ("SHORT", True)
 
 
-def _build_one_position(market, symbol, pos_side, fills):
-    """把同一 position cycle 的 fills 組成一個 position dict。"""
-    if pos_side == "SHORT":
-        open_fills  = [f for f in fills if f.get("side") == "SELL"]
-        close_fills = [f for f in fills if f.get("side") == "BUY"]
-    else:  # LONG
-        open_fills  = [f for f in fills if f.get("side") == "BUY"]
-        close_fills = [f for f in fills if f.get("side") == "SELL"]
+def _build_segment(market, symbol, book, open_fill, close_fill, matched_qty,
+                   pnl_share, fee_share, seg_id, is_orphan=False):
+    """把一段 FIFO 配對（一個開倉 fill × 一個平倉 fill）組成一筆已平交易 dict。
 
-    # 若全是同一 side（資料異常），fallback
-    if not open_fills:
-        open_fills = fills
-    open_fills  = sorted(open_fills,  key=lambda x: x.get("trade_time", 0))
-    close_fills = sorted(close_fills, key=lambda x: x.get("trade_time", 0))
+    open_fill 為 None 代表 orphan close（窗口前就開、佇列無對應開倉 lot）：open_time
+    退回平倉時間（保證 open ≤ close），avg_entry/開倉資訊缺省，標記 is_orphan_close。
+    回傳 dict 內含 fills=[開倉, 平倉]（時間順），供 detail 端點展開。
+    """
+    close_time = int(close_fill.get("trade_time", 0))
+    if open_fill is not None:
+        open_time     = int(open_fill.get("trade_time", 0))
+        avg_entry     = round(_seg_float(open_fill.get("price")), 6)
+        open_trade_id = open_fill.get("trade_id")
+        margin_asset  = open_fill.get("margin_asset") or close_fill.get("margin_asset")
+        seg_fills     = [open_fill, close_fill]
+    else:
+        open_time     = close_time          # orphan：無開倉時間，退回平倉時間
+        avg_entry     = None
+        open_trade_id = close_fill.get("trade_id")
+        margin_asset  = close_fill.get("margin_asset")
+        seg_fills     = [close_fill]
 
-    open_time  = int(open_fills[0].get("trade_time", 0))
-    close_time = int(close_fills[-1].get("trade_time", 0)) if close_fills else None
-
-    open_qty  = sum(float(f.get("qty_base", 0)) for f in open_fills)
-    close_qty = sum(float(f.get("qty_base", 0)) for f in close_fills)
-
-    avg_entry = (
-        sum(float(f.get("price", 0)) * float(f.get("qty_base", 0)) for f in open_fills) / open_qty
-        if open_qty > 0 else 0.0
-    )
-    avg_exit = (
-        sum(float(f.get("price", 0)) * float(f.get("qty_base", 0)) for f in close_fills) / close_qty
-        if close_qty > 0 else None
-    )
-
-    realized_pnl = sum(float(f.get("realized_pnl", 0)) for f in fills)
-    fees         = sum(float(f.get("fee", 0) or 0) for f in fills)
-    hold_ms      = (close_time - open_time) if close_time else None
-
-    pnl_asset = fills[0].get("margin_asset") or "USDT"
-    fee_asset = fills[0].get("fee_asset") or pnl_asset
-    pos_id    = fills[0].get("trade_id")  # 以第一筆 fill 的 trade_id 作為 position ID
+    pnl_asset = margin_asset or "USDT"
+    fee_asset = close_fill.get("fee_asset") or pnl_asset
 
     return {
-        "id":            pos_id,
-        "market":        market,
-        "symbol":        symbol,
-        "direction":     "Short" if pos_side == "SHORT" else "Long",
-        "open_trade_id": pos_id,
-        "open_time":     open_time,
-        "close_time":    close_time,
-        "hold_ms":       hold_ms,
-        "qty":           round(open_qty, 8),
-        "avg_entry":     round(avg_entry, 6),
-        "avg_exit":      round(avg_exit, 6) if avg_exit is not None else None,
-        "realized_pnl":  round(realized_pnl, 6),
-        "pnl_asset":     pnl_asset,
-        "is_estimated":  False,
-        "fees":          round(fees, 8),
-        "fee_asset":     fee_asset,
-        "funding":       0.0,
-        "num_fills":     len(fills),
+        "id":              seg_id,
+        "market":          market,
+        "symbol":          symbol,
+        "direction":       "Short" if book == "SHORT" else "Long",
+        "open_trade_id":   open_trade_id,
+        "open_time":       open_time,
+        "close_time":      close_time,
+        "hold_ms":         close_time - open_time,
+        "qty":             round(matched_qty, 8),
+        "avg_entry":       avg_entry,
+        "avg_exit":        round(_seg_float(close_fill.get("price")), 6),
+        "realized_pnl":    round(pnl_share, 6),
+        "pnl_asset":       pnl_asset,
+        "is_estimated":    False,
+        "is_orphan_close": is_orphan,
+        "fees":            round(fee_share, 8),
+        "fee_asset":       fee_asset,
+        "funding":         0.0,
+        "num_fills":       len(seg_fills),
+        "fills":           seg_fills,
     }
 
 
 def build_positions_from_fills(fills):
-    """
-    將 fills 按 (market, symbol) 分組，
-    再用最簡單的狀態機：累積 qty 為 0 時即為 cycle 邊界。
+    """將 fills 依 (market, symbol) 分組，用 FIFO 把每個平倉 fill 配對最早的開倉 fill，
+    每段配對產生一筆已平交易（closed trade）。
 
-    核心算法：
-    - BUY = +qty, SELL = -qty
-    - 累積 cum_qty，當 cum_qty 接近 0（|cum_qty| < tolerance）時，cycle 完成
-    - 即使 cum_qty 跨越 0（短暫變反向），也在通過 0 時截斷
+    每筆交易：
+      - open_time = 配對到的開倉 fill 時間；close_time = 該平倉 fill 時間（open ≤ close）。
+      - qty = 該段配對量；avg_entry = 開倉價；avg_exit = 平倉價。
+      - realized_pnl = 平倉 fill 的 realized_pnl 按配對量比例分攤（開倉 fill PNL=0）；
+        分攤後全段加總 == 平倉 fill 原始 PNL，故總 PNL 與逐筆 fill 加總一致。
+      - id = 平倉 fill 的 row id * 1000 + 段序號（全域唯一、可由 detail 反推）。
+      - fills = [開倉 fill, 平倉 fill]（orphan 只含平倉），供前端展開。
+
+    殘量處理：
+      - 窗口結束佇列仍有開倉殘量（如 ADAUSD 殘 ~9721 ADA）= 未平倉，不產生 closed trade，
+        排除在 Trade History 外（不做 open position UI）。
+      - 平倉量超出佇列現有開倉量 = orphan close（窗口前就開、無對應開倉 fill），仍產生一筆
+        交易（is_orphan_close=True），避免丟資料。
     """
-    from collections import defaultdict
+    from collections import defaultdict, deque
 
     groups = defaultdict(list)
     for f in fills:
-        if not f.get("position_side"):
-            continue
-        key = (f.get("market"), f.get("symbol"))
-        groups[key].append(f)
+        groups[(f.get("market"), f.get("symbol"))].append(f)
 
+    EPS = 1e-9
     positions = []
-    TOLERANCE = 1e-3  # cum_qty 接近 0 的閾值（0.001 = tolerance for micro-positions）
 
     for (market, symbol), group_fills in groups.items():
-        # 複合排序鍵：trade_time 為主，id（trades 表單調主鍵）為 tie-breaker。
-        # COIN-M 有大量同毫秒 fill（單一 trade_time 多達 20 筆），只按 trade_time
-        # 排序時 Python 穩定排序會保留輸入的物理順序——而不同 SQL 查詢回傳的物理
-        # 順序不同，導致狀態機算出不同的 cycle 邊界、position 數飄移。加上 id 後
-        # 排序完全確定，與輸入順序無關。
+        # 複合排序鍵：trade_time 為主，id（trades 表單調主鍵）為 tie-breaker，確保同毫秒
+        # 大量 fill（COIN-M 常見）的順序與 SQL 物理回傳順序無關、完全確定。
         group_fills = sorted(group_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
 
-        cycle_fills = []
-        cum_qty = 0.0
+        # 每個 book 維護開倉 lot 佇列：deque of [剩餘qty, open_fill]
+        books = {"LONG": deque(), "SHORT": deque()}
 
         for f in group_fills:
-            side = f.get("side")
-            qty = float(f.get("qty_base", 0))
-            delta = qty if side == "BUY" else -qty
+            book, is_open = _classify(f, books)
+            qty = _seg_float(f.get("qty_base"))
+            if qty <= 0:
+                continue
 
-            prev_cum = cum_qty
-            cum_qty += delta
+            if is_open:
+                books[book].append([qty, f])
+                continue
 
-            # 檢測：(1) cum_qty 跨越 0，或 (2) cum_qty 回到平衡狀態
-            crossed_zero = (prev_cum * cum_qty < 0)  # 符號改變 = 跨越 0
-            is_balanced = (abs(cum_qty) < TOLERANCE)
+            # 平倉 fill：依 FIFO 消耗該 book 最早的開倉 lot
+            lots        = books[book]
+            close_total = qty
+            close_pnl   = _seg_float(f.get("realized_pnl"))
+            close_fee   = _seg_float(f.get("fee"))
+            close_row   = f.get("id", 0)
+            remaining   = qty
+            seg_idx     = 0
 
-            # 總是先加入當前 fill
-            cycle_fills.append(f)
+            while remaining > EPS and lots:
+                lot       = lots[0]
+                open_fill = lot[1]
+                matched   = min(remaining, lot[0])
+                open_total = _seg_float(open_fill.get("qty_base")) or matched
+                open_fee   = _seg_float(open_fill.get("fee"))
+                # 平倉 PNL/手續費按配對量比例分攤；開倉手續費按其被消耗比例分攤
+                pnl_share = close_pnl * (matched / close_total)
+                fee_share = (open_fee * (matched / open_total)
+                             + close_fee * (matched / close_total))
+                positions.append(_build_segment(
+                    market, symbol, book, open_fill, f, matched,
+                    pnl_share, fee_share, close_row * 1000 + seg_idx))
+                seg_idx    += 1
+                lot[0]     -= matched
+                remaining  -= matched
+                if lot[0] <= EPS:
+                    lots.popleft()
 
-            # 然後檢測是否要結束 cycle（當前 fill 已包含）
-            if (crossed_zero or is_balanced) and cycle_fills:
-                # 結束當前 cycle：方向優先用 position_side，退回 side 啟發式
-                inferred_pos_side = _infer_pos_side(cycle_fills)
-                positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
-                cycle_fills = []
-                # 如果平衡，重置狀態
-                if is_balanced:
-                    cum_qty = 0.0
+            if remaining > EPS:
+                # orphan close：窗口前開倉，無對應 open lot，仍記一筆避免丟資料
+                pnl_share = close_pnl * (remaining / close_total)
+                fee_share = close_fee * (remaining / close_total)
+                positions.append(_build_segment(
+                    market, symbol, book, None, f, remaining,
+                    pnl_share, fee_share, close_row * 1000 + seg_idx, is_orphan=True))
 
-        # 殘餘
-        if cycle_fills:
-            inferred_pos_side = _infer_pos_side(cycle_fills)
-            positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
+        # 佇列殘餘 = 未平倉，刻意不產生 closed trade
 
     return positions
 
@@ -411,6 +442,7 @@ def list_positions(
     # USD 估值供前端并排显示；USDM 已是 USD。仅对当前页换算，省一次大批量计算。
     prices = _load_prices()
     for p in data:
+        p.pop("fills", None)  # 清單不展開 fills（raw fill dict 含 Decimal/datetime），detail 才用
         p["realized_pnl_usd"] = _pnl_to_usd(p.get("realized_pnl"), p.get("pnl_asset"), prices)
 
     return {"total": total, "limit": limit, "offset": offset, "positions": data}
@@ -419,83 +451,27 @@ def list_positions(
 # ─── /api/positions/{trade_id} ───────────────────────────────────────────────────
 @app.get("/api/positions/{trade_id}", dependencies=[Depends(auth)])
 def position_detail(trade_id: int):
-    # 找到 fill 所屬的 position cycle，回傳聚合結果 + 該 position 的 fills
-    anchor = one("SELECT * FROM trades WHERE trade_id = %s", (trade_id,))
+    # trade_id 為聚合後交易的合成 id = 平倉 fill 的 row id * 1000 + 段序號。
+    # 反推平倉 fill 的 row id → 定位 (market, symbol)，再用同一 FIFO 聚合找回該段交易，
+    # 與 build_positions_from_fills 完全一致（不再各自重跑狀態機，避免邏輯漂移）。
+    close_row = trade_id // 1000
+    anchor = one("SELECT * FROM trades WHERE id = %s", (close_row,))
     if not anchor:
         raise HTTPException(status_code=404, detail="Position not found")
 
-    # 取同一 (market, symbol) 的所有 fills（不按 position_side 篩選）
     same_symbol = rows(
-        "SELECT * FROM trades WHERE market=%s AND symbol=%s AND position_side IS NOT NULL ORDER BY trade_time ASC, id ASC",
+        "SELECT * FROM trades WHERE market=%s AND symbol=%s ORDER BY trade_time ASC, id ASC",
         (anchor["market"], anchor["symbol"]),
     )
 
-    # 聚合並找出包含 trade_id 的那個 position
+    # 聚合並用合成 id 找出該段交易；build_positions_from_fills 已把配對到的開倉/平倉
+    # fill 掛在 position["fills"]（時間順：開倉在前、平倉在後）。
     positions = build_positions_from_fills(same_symbol)
     target = next((p for p in positions if p["id"] == trade_id), None)
-
     if not target:
-        # fallback: 用 anchor fill 本身組成單筆
-        target = _build_one_position(
-            anchor["market"], anchor["symbol"],
-            _infer_pos_side([anchor]), [anchor]
-        )
-        target_fills = [anchor]
-    else:
-        # 重新聚合以找出這個 position 對應的 fills
-        # 使用與 build_positions_from_fills 相同的狀態機邏輯
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for f in same_symbol:
-            key = (f.get("market"), f.get("symbol"))
-            groups[key].append(f)
+        raise HTTPException(status_code=404, detail="Position not found")
 
-        target_fills = []
-        TOLERANCE = 1e-3  # 與 build_positions_from_fills 保持一致
-
-        for (market, symbol), group_fills in groups.items():
-            if market == anchor["market"] and symbol == anchor["symbol"]:
-                # 與 build_positions_from_fills 一致的複合排序鍵（trade_time, id）
-                group_fills = sorted(group_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
-
-                # 重新執行狀態機（與 build_positions_from_fills 邏輯一致）
-                cycle_fills = []
-                cum_qty = 0.0
-
-                for f in group_fills:
-                    side = f.get("side")
-                    qty = float(f.get("qty_base", 0))
-                    delta = qty if side == "BUY" else -qty
-
-                    prev_cum = cum_qty
-                    cum_qty += delta
-
-                    # 檢測：(1) cum_qty 跨越 0，或 (2) cum_qty 回到平衡狀態
-                    crossed_zero = (prev_cum * cum_qty < 0)
-                    is_balanced = (abs(cum_qty) < TOLERANCE)
-
-                    # 總是先加入當前 fill
-                    cycle_fills.append(f)
-
-                    # 然後檢測是否要結束 cycle
-                    if (crossed_zero or is_balanced) and cycle_fills:
-                        # 結束當前 cycle，檢查是否包含 trade_id
-                        if any(cf["trade_id"] == trade_id for cf in cycle_fills):
-                            target_fills = cycle_fills
-                            break
-                        cycle_fills = []
-                        # 如果平衡，重置狀態
-                        if is_balanced:
-                            cum_qty = 0.0
-
-                # 如果還沒找到，檢查最後一個 cycle
-                if not target_fills and cycle_fills:
-                    if any(cf["trade_id"] == trade_id for cf in cycle_fills):
-                        target_fills = cycle_fills
-
-    # 如果仍無 fills，使用 target 的 num_fills 作為後備
-    if not target_fills:
-        target_fills = same_symbol[:target.get("num_fills", 1)]
+    target_fills = target.pop("fills", [])
 
     # COIN-M 的 realized_pnl 以标的币计价，附带 USD 估值供前端并排显示。
     prices = _load_prices()
@@ -626,7 +602,7 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     #      W/L，wins+losses 永遠對不上 count；
     #   2) count 的方向曾用「首筆 fill side」啟發式推斷，COIN-M 空單（SELL 開→BUY
     #      平）若抓取窗口從平倉 BUY 開始，首筆是 BUY → 被誤判成 LONG，憑空生出假
-    #      多頭回合。現已改為優先採用 Binance 權威欄位 position_side（見 _infer_pos_side）。
+    #      多頭回合。現已改為優先採用 Binance 權威欄位 position_side（見 _classify）。
     # 改為：方向一律用 position 的 direction，勝負一律看 position 淨 realized_pnl 正負。
     agg_positions = build_positions_from_fills(trades)
 
