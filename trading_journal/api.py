@@ -207,7 +207,9 @@ def summary():
     # 用聚合後 positions 計算 total_positions 和 win_rate（Step 5 fix）
     futures_fills = [t for t in trades if t.get("market") in ("usdm", "coinm")]
     agg_positions = build_positions_from_fills(futures_fills)
-    total_positions = len(agg_positions)
+    # 只計已平倉 position（與 Journal 的 status=closed 口徑一致）；
+    # 未平倉部位不計入 Dashboard 的 Total Trades。
+    total_positions = len([p for p in agg_positions if p.get("close_time") is not None])
 
     # 勝率：以聚合 position 的總 PNL 正負計算。
     # 注：勝負只看「正負號」，而 USD 換算是乘以正數現價，不改變符號，
