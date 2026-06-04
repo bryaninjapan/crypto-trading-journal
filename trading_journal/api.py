@@ -194,9 +194,65 @@ def _build_segment(market, symbol, book, open_fill, close_fill, matched_qty,
     }
 
 
+def _preaggregate_by_order(fills):
+    """order_id 預聚合：交易所把一張 order 分批成交（COIN-M 實測 29 張 order → 110 筆
+    fill，同價同毫秒），raw fill 層級配對會把一張開倉單當成 N 個 lot，產生 N 筆 open/
+    close/price 完全相同、只有 qty 不同的重複交易。FIFO 配對的正確單位是 order，不是 fill
+    （對標 CMM 的「Avg Fill Price / Size」＝先合併同單 fill）。
+
+    依 (market, symbol, order_id, side) 分組，每組併成一筆 synthetic fill：
+      - qty_base    = Σ qty_base
+      - price       = Σ(price×qty_base) / Σ qty_base（加權均價）
+      - realized_pnl= Σ realized_pnl
+      - fee         = Σ fee
+      - trade_time  = 該 order 最後一筆 fill 的時間（= 完全成交時間）
+      - id / trade_id = 取該 order 第一筆 fill（代表性，保證 detail 端點可由 id 反查回
+        (market, symbol) 並重現同一 synthetic fill）
+      - side / position_side / margin_asset / symbol / market 等同組一致，沿用第一筆。
+
+    order_id 為 None 的舊資料 → 每筆各自獨立（不合併），避免 None 全併成一坨。
+    回傳 synthetic fills list，餵給下游 FIFO（配對邏輯完全不動）。
+    """
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    singles = []
+    for f in fills:
+        oid = f.get("order_id")
+        if oid is None:
+            singles.append(f)
+            continue
+        grouped[(f.get("market"), f.get("symbol"), oid, f.get("side"))].append(f)
+
+    out = list(singles)
+    for _key, order_fills in grouped.items():
+        if len(order_fills) == 1:
+            out.append(order_fills[0])
+            continue
+        ordered = sorted(order_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
+        rep = dict(ordered[0])                       # 代表性 fill（id / trade_id / 共同欄位）
+        total_qty = sum(_seg_float(f.get("qty_base")) for f in ordered)
+        if total_qty > 0:
+            vwap = sum(_seg_float(f.get("price")) * _seg_float(f.get("qty_base"))
+                       for f in ordered) / total_qty
+        else:
+            vwap = _seg_float(rep.get("price"))
+        rep["qty_base"]     = total_qty
+        rep["price"]        = vwap
+        rep["realized_pnl"] = sum(_seg_float(f.get("realized_pnl")) for f in ordered)
+        rep["fee"]          = sum(_seg_float(f.get("fee")) for f in ordered)
+        rep["trade_time"]   = ordered[-1].get("trade_time", rep.get("trade_time"))
+        out.append(rep)
+
+    return out
+
+
 def build_positions_from_fills(fills):
     """將 fills 依 (market, symbol) 分組，用 FIFO 把每個平倉 fill 配對最早的開倉 fill，
     每段配對產生一筆已平交易（closed trade）。
+
+    前置：先做 order_id 預聚合（_preaggregate_by_order），把同一張 order 被交易所拆成
+    多筆的 fill 併回 order 層級，再餵給 FIFO，避免一張單被當 N 個 lot 產生重複交易。
 
     每筆交易：
       - open_time = 配對到的開倉 fill 時間；close_time = 該平倉 fill 時間（open ≤ close）。
@@ -213,6 +269,8 @@ def build_positions_from_fills(fills):
         交易（is_orphan_close=True），避免丟資料。
     """
     from collections import defaultdict, deque
+
+    fills = _preaggregate_by_order(fills)
 
     groups = defaultdict(list)
     for f in fills:
