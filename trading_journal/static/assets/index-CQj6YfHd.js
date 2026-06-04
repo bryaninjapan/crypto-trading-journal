@@ -8585,17 +8585,57 @@ function KpiCard({
     sub && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-data-mono text-on-surface-variant", children: sub })
   ] });
 }
-function Loading() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center py-20 text-on-surface-variant", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin", children: "progress_activity" }) });
-}
-function ErrorBlock({ error }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "glass-card !p-lg text-bearish", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-body-bold", children: "加载失败" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 font-mono text-data-mono text-on-surface-variant", children: error })
-  ] });
-}
-function Empty({ text = "暂无数据" }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "py-16 text-center text-on-surface-variant", children: text });
+const Plotly = window.Plotly;
+const DARK_LAYOUT = {
+  paper_bgcolor: "rgba(0,0,0,0)",
+  plot_bgcolor: "rgba(0,0,0,0)",
+  font: { color: "#c7c4d7", family: "JetBrains Mono, monospace", size: 11 },
+  margin: { l: 48, r: 16, t: 8, b: 32 },
+  xaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
+  yaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
+  legend: { orientation: "h", y: -0.2, font: { color: "#c7c4d7" } },
+  showlegend: false,
+  hovermode: "x unified",
+  hoverlabel: {
+    bgcolor: "#1c1f29",
+    bordercolor: "#464554",
+    font: { color: "#e0e2ef", family: "JetBrains Mono, monospace", size: 11 }
+  }
+};
+function PlotlyChart({
+  data,
+  layout,
+  height = 280
+}) {
+  const ref = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (!ref.current || !Plotly) return;
+    try {
+      Plotly.react(
+        ref.current,
+        data,
+        { ...DARK_LAYOUT, ...layout, height },
+        { displayModeBar: false, responsive: true }
+      );
+    } catch (e) {
+      console.error("Plotly rendering error:", e);
+    }
+  }, [data, layout, height]);
+  reactExports.useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(() => {
+      if (ref.current) Plotly.relayout(ref.current, { autosize: true });
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  reactExports.useEffect(() => {
+    const el2 = ref.current;
+    return () => {
+      if (el2) Plotly.purge(el2);
+    };
+  }, []);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref, style: { width: "100%", height, overflow: "visible" } });
 }
 function fmtNum(n2, digits = 2) {
   if (n2 === null || n2 === void 0 || Number.isNaN(n2)) return "—";
@@ -8639,6 +8679,60 @@ const MARKET_LABEL = {
   usdm: "USD-M",
   coinm: "COIN-M"
 };
+function BalanceDonut({ balances }) {
+  const valid = balances.filter((b) => b.usd_value && b.usd_value > 0).sort((a, b) => (b.usd_value ?? 0) - (a.usd_value ?? 0));
+  if (!valid.length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-data-mono text-on-surface-variant", children: "No balances" });
+  }
+  const topN = 4;
+  const top = valid.slice(0, topN);
+  const others = valid.slice(topN);
+  const otherSum = others.reduce((s, b) => s + (b.usd_value ?? 0), 0);
+  const labels = [...top.map((b) => b.asset), ...otherSum > 0 ? ["Others"] : []];
+  const values = [...top.map((b) => b.usd_value ?? 0), ...otherSum > 0 ? [otherSum] : []];
+  const total = values.reduce((s, v2) => s + v2, 0);
+  const colors = ["#c0c1ff", "#7bd0ff", "#ddb7ff", "#10B981", "#EF4444"];
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    PlotlyChart,
+    {
+      height: 180,
+      data: [
+        {
+          values,
+          labels,
+          type: "pie",
+          hole: 0.65,
+          marker: { colors: colors.slice(0, labels.length) },
+          textinfo: "none",
+          hovertemplate: "<b>%{label}</b><br>%{value:.6g}<extra></extra>"
+        }
+      ],
+      layout: {
+        showlegend: true,
+        legend: { orientation: "v", x: 1.02, y: 1, xanchor: "left", yanchor: "top" },
+        annotations: [
+          {
+            text: `${fmtNum(total, 6)}`,
+            font: { size: 18, color: "#e0e2ef" },
+            showarrow: false
+          }
+        ]
+      }
+    }
+  ) });
+}
+function Loading() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center py-20 text-on-surface-variant", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin", children: "progress_activity" }) });
+}
+function ErrorBlock({ error }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "glass-card !p-lg text-bearish", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-body-bold", children: "加载失败" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 font-mono text-data-mono text-on-surface-variant", children: error })
+  ] });
+}
+function Empty({ text = "暂无数据" }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "py-16 text-center text-on-surface-variant", children: text });
+}
 function Dashboard() {
   var _a, _b;
   const [balanceMarket, setBalanceMarket] = reactExports.useState("usdm");
@@ -8649,6 +8743,7 @@ function Dashboard() {
   const data = summary.data;
   const ana = analytics.data;
   const pnl = data.kpi.futures_realized_pnl;
+  const curve = data.equity_curve;
   const byMarket = {};
   for (const b of data.balances) (byMarket[_a = b.market] ?? (byMarket[_a] = [])).push(b);
   const marketBalances = balanceMarket ? byMarket[balanceMarket] || [] : data.balances;
@@ -8657,7 +8752,7 @@ function Dashboard() {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-1 gap-md md:grid-cols-[1fr_2fr]", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-md", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Total Balance" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 text-sm text-on-surface-variant", children: "Chart loading..." })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(BalanceDonut, { balances: data.balances }) })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-md", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(KpiCard, { label: "Futures PNL", value: fmtPnl(pnl), valueClass: pnlClass(pnl) }),
@@ -8675,7 +8770,23 @@ function Dashboard() {
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { noOverflow: true, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-between mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-sans text-headline-md font-bold", children: "Equity Curve" }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-[300px] flex items-center justify-center text-on-surface-variant", children: "Chart disabled for debugging..." })
+      curve.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        PlotlyChart,
+        {
+          height: 300,
+          data: [
+            {
+              x: curve.map((p2) => new Date(p2.t)),
+              y: curve.map((p2) => p2.cum),
+              type: "scatter",
+              mode: "lines",
+              fill: "tozeroy",
+              line: { color: "#7bd0ff", width: 2, shape: "spline" },
+              fillcolor: "rgba(123,208,255,0.08)"
+            }
+          ]
+        }
+      )
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "!p-0 overflow-hidden", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "border-b border-white/[0.08] px-lg py-md", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
@@ -9047,58 +9158,6 @@ function Row$1({ label, value }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-on-surface-variant", children: label }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-on-surface", children: value })
   ] });
-}
-const Plotly = window.Plotly;
-const DARK_LAYOUT = {
-  paper_bgcolor: "rgba(0,0,0,0)",
-  plot_bgcolor: "rgba(0,0,0,0)",
-  font: { color: "#c7c4d7", family: "JetBrains Mono, monospace", size: 11 },
-  margin: { l: 48, r: 16, t: 8, b: 32 },
-  xaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
-  yaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
-  legend: { orientation: "h", y: -0.2, font: { color: "#c7c4d7" } },
-  showlegend: false,
-  hovermode: "x unified",
-  hoverlabel: {
-    bgcolor: "#1c1f29",
-    bordercolor: "#464554",
-    font: { color: "#e0e2ef", family: "JetBrains Mono, monospace", size: 11 }
-  }
-};
-function PlotlyChart({
-  data,
-  layout,
-  height = 280
-}) {
-  const ref = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (!ref.current || !Plotly) return;
-    try {
-      Plotly.react(
-        ref.current,
-        data,
-        { ...DARK_LAYOUT, ...layout, height },
-        { displayModeBar: false, responsive: true }
-      );
-    } catch (e) {
-      console.error("Plotly rendering error:", e);
-    }
-  }, [data, layout, height]);
-  reactExports.useEffect(() => {
-    if (!ref.current) return;
-    const ro = new ResizeObserver(() => {
-      if (ref.current) Plotly.relayout(ref.current, { autosize: true });
-    });
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
-  reactExports.useEffect(() => {
-    const el2 = ref.current;
-    return () => {
-      if (el2) Plotly.purge(el2);
-    };
-  }, []);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref, style: { width: "100%", height, overflow: "visible" } });
 }
 function Analytics() {
   const [market, setMarket] = reactExports.useState("usdm");
