@@ -17,7 +17,7 @@ export function Profile() {
       <GlassCard className="space-y-2">
         <span className="text-label-caps uppercase text-on-surface-variant">Account</span>
         <Row label="Exchange" value="Binance" />
-        <Row label="Markets" value="Spot · USD-M · COIN-M" />
+        <Row label="Markets" value="USD-M · COIN-M" />
         <Row label="Consolidated" value="仅 Binance（Flipster 延后）" />
       </GlassCard>
 
