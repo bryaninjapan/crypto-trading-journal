@@ -104,6 +104,25 @@ def _pnl_to_usd(pnl, asset, prices):
 
 
 # ─── Position Aggregation (fills → positions) ─────────────────────────────────
+def _infer_pos_side(cycle_fills):
+    """判定一個 cycle 的多空方向。
+
+    優先採用 Binance 提供的權威欄位 position_side：COIN-M（雙向持倉）一定帶
+    "LONG"/"SHORT"，直接採用即正確。只有當該欄位全為空 / "BOTH"（USDM 單向
+    模式的舊資料）時，才退回「第一筆 fill 的 side」啟發式。
+
+    舊啟發式對 COIN-M 空單會誤判：空單生命週期是 SELL 開倉 → BUY 平倉，但抓取
+    窗口常從平倉的 BUY 開始，第一筆是 BUY → 誤判成 LONG。改用 position_side 後
+    不再翻轉。
+    """
+    for f in cycle_fills:
+        ps = f.get("position_side")
+        if ps and ps != "BOTH":
+            return "SHORT" if ps == "SHORT" else "LONG"
+    # USDM 單向模式舊資料：position_side 全為空 / BOTH，退回 side 啟發式
+    return "LONG" if cycle_fills[0].get("side") == "BUY" else "SHORT"
+
+
 def _build_one_position(market, symbol, pos_side, fills):
     """把同一 position cycle 的 fills 組成一個 position dict。"""
     if pos_side == "SHORT":
@@ -214,11 +233,8 @@ def build_positions_from_fills(fills):
 
             # 然後檢測是否要結束 cycle（當前 fill 已包含）
             if (crossed_zero or is_balanced) and cycle_fills:
-                # 結束當前 cycle
-                if cycle_fills[0].get("side") == "BUY":
-                    inferred_pos_side = "LONG"
-                else:
-                    inferred_pos_side = "SHORT"
+                # 結束當前 cycle：方向優先用 position_side，退回 side 啟發式
+                inferred_pos_side = _infer_pos_side(cycle_fills)
                 positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
                 cycle_fills = []
                 # 如果平衡，重置狀態
@@ -227,10 +243,7 @@ def build_positions_from_fills(fills):
 
         # 殘餘
         if cycle_fills:
-            if cycle_fills[0].get("side") == "BUY":
-                inferred_pos_side = "LONG"
-            else:
-                inferred_pos_side = "SHORT"
+            inferred_pos_side = _infer_pos_side(cycle_fills)
             positions.append(_build_one_position(market, symbol, inferred_pos_side, cycle_fills))
 
     return positions
@@ -425,7 +438,7 @@ def position_detail(trade_id: int):
         # fallback: 用 anchor fill 本身組成單筆
         target = _build_one_position(
             anchor["market"], anchor["symbol"],
-            anchor["position_side"] or "LONG", [anchor]
+            _infer_pos_side([anchor]), [anchor]
         )
         target_fills = [anchor]
     else:
@@ -611,9 +624,9 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     # position_side 欄位分桶 + 用每筆 fill 的 realized_pnl 數勝負）有兩個 bug：
     #   1) count 用 position 級、W/L 用 fill 級 → 一個回合多筆平倉 fill 會貢獻多個
     #      W/L，wins+losses 永遠對不上 count；
-    #   2) count 的方向來自 build_positions_from_fills 依首筆 fill side 推斷，W/L 的
-    #      方向來自 DB 的 position_side 欄位——COIN-M 的 position_side 幾乎全是 SHORT，
-    #      導致多頭回合的 fill 全落進 SHORT 桶（LONG 0W0L、SHORT 塞爆）。
+    #   2) count 的方向曾用「首筆 fill side」啟發式推斷，COIN-M 空單（SELL 開→BUY
+    #      平）若抓取窗口從平倉 BUY 開始，首筆是 BUY → 被誤判成 LONG，憑空生出假
+    #      多頭回合。現已改為優先採用 Binance 權威欄位 position_side（見 _infer_pos_side）。
     # 改為：方向一律用 position 的 direction，勝負一律看 position 淨 realized_pnl 正負。
     agg_positions = build_positions_from_fills(trades)
 
