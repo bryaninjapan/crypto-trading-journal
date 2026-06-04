@@ -11,13 +11,21 @@ const MARKETS = ["", "usdm", "coinm"];
 
 export function Journal() {
   const [market, setMarket] = useState("");
+  const [symbol, setSymbol] = useState("");
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
 
   const symbols = useApi(() => api.symbols(market || undefined), [market]);
   const positions = useApi(
-    () => api.positions({ market: market || undefined, status: "closed", limit, offset }),
-    [market, limit, offset],
+    () =>
+      api.positions({
+        market: market || undefined,
+        symbol: symbol || undefined,
+        status: "closed",
+        limit,
+        offset,
+      }),
+    [market, symbol, limit, offset],
   );
 
   return (
@@ -33,7 +41,7 @@ export function Journal() {
                 market === m ? "bg-primary/20 text-primary" : "text-on-surface-variant"
               }`}
             >
-              {m === "" ? "All" : m === "usdm" ? "USD-M" : m === "coinm" ? "COIN-M" : "Spot"}
+              {m === "" ? "All" : m === "usdm" ? "USD-M" : "COIN-M"}
             </button>
           ))}
         </div>
@@ -54,11 +62,13 @@ export function Journal() {
               <GlassCard
                 key={`${s.market}-${s.symbol}`}
                 hover
-                className="!p-md cursor-pointer"
+                className={`!p-md cursor-pointer ${
+                  symbol === s.symbol ? "ring-1 ring-primary/60" : ""
+                }`}
                 onClick={() => {
                   setMarket(s.market === "usdm" ? "usdm" : s.market === "coinm" ? "coinm" : "");
-                  // 過濾該 symbol 的交易（待前端實現）
-                  window.location.hash = `#symbol=${s.symbol}`;
+                  setSymbol(s.symbol);
+                  setOffset(0);
                 }}
               >
                 <div className="flex items-center justify-between">
@@ -81,7 +91,24 @@ export function Journal() {
 
       {/* Trade History Table */}
       <section className="space-y-sm">
-        <h2 className="text-label-caps uppercase text-on-surface-variant">Trade History</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-label-caps uppercase text-on-surface-variant">Trade History</h2>
+          {symbol && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/15 px-2 py-0.5 text-data-mono text-primary">
+              {symbol}
+              <button
+                onClick={() => {
+                  setSymbol("");
+                  setOffset(0);
+                }}
+                aria-label="清除 symbol 篩選"
+                className="transition-colors hover:text-on-surface"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+        </div>
         {positions.loading ? (
           <Loading />
         ) : positions.error ? (
