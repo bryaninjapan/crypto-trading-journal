@@ -591,6 +591,18 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     else:
         time_span_days = 1
 
+    # 成交量（USD notional）：USD-M 用 quote_qty；COIN-M 無 quote_qty，回退 price*qty_base
+    def _notional(t):
+        qq = t.get("quote_qty")
+        if qq is not None:
+            return abs(float(qq))
+        return abs(float(t.get("price", 0)) * float(t.get("qty_base", 0)))
+
+    total_trades_volume = sum(_notional(t) for t in trades)
+    # 交易天數：以 distinct UTC 日期計（trade_time 為毫秒 epoch）
+    trade_days = len({int(t.get("trade_time", 0)) // 86400000 for t in trades}) or 1
+    avg_daily_volume = total_trades_volume / trade_days
+
     return {
         "market": market,
         "kpi": {
@@ -607,9 +619,9 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
             "total_gain_loss": round(total_pnl, 2),
             "trade_expectancy": round(total_pnl / len(agg_positions) if agg_positions else 0, 2),
             "avg_daily_gain": round(total_pnl / time_span_days, 2),
-            "avg_daily_volume": 0,
+            "avg_daily_volume": round(avg_daily_volume, 2),
             "largest_gain": round(max((float(t.get("realized_pnl", 0)) for t in trades if float(t.get("realized_pnl", 0)) > 0), default=0), 2),
-            "total_trades_volume": 0,
+            "total_trades_volume": round(total_trades_volume, 2),
             "avg_trades_per_day": round(len(agg_positions) / time_span_days, 2),
             "avg_trade_win": round((long_wins_pnl + short_wins_pnl - 0.02) / (long_wins + short_wins) if (long_wins + short_wins) > 0 else 0, 2),
             "avg_trade_loss": round((long_losses_pnl + short_losses_pnl + 0.02) / (long_losses + short_losses) if (long_losses + short_losses) > 0 else 0, 2),

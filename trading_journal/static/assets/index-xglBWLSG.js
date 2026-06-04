@@ -9423,7 +9423,7 @@ function Profile() {
     /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "space-y-2", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-caps uppercase text-on-surface-variant", children: "Account" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { label: "Exchange", value: "Binance" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { label: "Markets", value: "Spot · USD-M · COIN-M" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { label: "Markets", value: "USD-M · COIN-M" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { label: "Consolidated", value: "仅 Binance（Flipster 延后）" })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs(GlassCard, { className: "space-y-2", children: [
