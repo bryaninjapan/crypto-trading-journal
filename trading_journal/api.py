@@ -149,7 +149,12 @@ def build_positions_from_fills(fills):
     TOLERANCE = 1e-3  # cum_qty 接近 0 的閾值（0.001 = tolerance for micro-positions）
 
     for (market, symbol), group_fills in groups.items():
-        group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
+        # 複合排序鍵：trade_time 為主，id（trades 表單調主鍵）為 tie-breaker。
+        # COIN-M 有大量同毫秒 fill（單一 trade_time 多達 20 筆），只按 trade_time
+        # 排序時 Python 穩定排序會保留輸入的物理順序——而不同 SQL 查詢回傳的物理
+        # 順序不同，導致狀態機算出不同的 cycle 邊界、position 數飄移。加上 id 後
+        # 排序完全確定，與輸入順序無關。
+        group_fills = sorted(group_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
 
         cycle_fills = []
         cum_qty = 0.0
@@ -197,7 +202,7 @@ def build_positions_from_fills(fills):
 @app.get("/api/summary", dependencies=[Depends(auth)])
 def summary():
     # 从数据库查询真实数据
-    trades = rows("SELECT * FROM trades ORDER BY trade_time ASC")
+    trades = rows("SELECT * FROM trades ORDER BY trade_time ASC, id ASC")
 
     # 用聚合後 positions 計算 total_positions 和 win_rate（Step 5 fix）
     futures_fills = [t for t in trades if t.get("market") in ("usdm", "coinm")]
@@ -337,7 +342,7 @@ def list_positions(
     offset: int = Query(0, ge=0),
 ):
     # Step 5 fix: 聚合 fills → positions
-    sql = "SELECT * FROM trades WHERE market IN ('usdm','coinm') ORDER BY trade_time ASC"
+    sql = "SELECT * FROM trades WHERE market IN ('usdm','coinm') ORDER BY trade_time ASC, id ASC"
     all_fills = rows(sql)
     all_positions = build_positions_from_fills(all_fills)
 
@@ -374,7 +379,7 @@ def position_detail(trade_id: int):
 
     # 取同一 (market, symbol) 的所有 fills（不按 position_side 篩選）
     same_symbol = rows(
-        "SELECT * FROM trades WHERE market=%s AND symbol=%s AND position_side IS NOT NULL ORDER BY trade_time ASC",
+        "SELECT * FROM trades WHERE market=%s AND symbol=%s AND position_side IS NOT NULL ORDER BY trade_time ASC, id ASC",
         (anchor["market"], anchor["symbol"]),
     )
 
@@ -403,7 +408,8 @@ def position_detail(trade_id: int):
 
         for (market, symbol), group_fills in groups.items():
             if market == anchor["market"] and symbol == anchor["symbol"]:
-                group_fills = sorted(group_fills, key=lambda x: x.get("trade_time", 0))
+                # 與 build_positions_from_fills 一致的複合排序鍵（trade_time, id）
+                group_fills = sorted(group_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
 
                 # 重新執行狀態機（與 build_positions_from_fills 邏輯一致）
                 cycle_fills = []
@@ -558,7 +564,7 @@ def position_mae_mfe_timeline(pid: int):
 @app.get("/api/analytics", dependencies=[Depends(auth)])
 def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     # 严格按 market 过滤交易
-    trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC", (market,))
+    trades = rows("SELECT * FROM trades WHERE market = %s ORDER BY trade_time ASC, id ASC", (market,))
 
     total_trades = len(trades)
     total_pnl = sum(float(t.get("realized_pnl", 0)) for t in trades)
