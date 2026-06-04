@@ -204,7 +204,9 @@ def summary():
     agg_positions = build_positions_from_fills(futures_fills)
     total_positions = len(agg_positions)
 
-    # 勝率：以聚合 position 的總 PNL 正負計算
+    # 勝率：以聚合 position 的總 PNL 正負計算。
+    # 注：勝負只看「正負號」，而 USD 換算是乘以正數現價，不改變符號，
+    #     故 COIN-M 的計價單位混亂不影響勝率分類，這裡無需換算。
     pnl_positions = [p for p in agg_positions if p.get("realized_pnl", 0) != 0]
     if pnl_positions:
         wins = len([p for p in pnl_positions if p["realized_pnl"] > 0])
@@ -212,77 +214,101 @@ def summary():
     else:
         win_rate = 0.0
 
-    # 期货 PNL 合计（USDM + COINM）
-    futures_pnl = sum([
-        float(t.get("realized_pnl", 0))
-        for t in trades
-        if t.get("market") in ["usdm", "coinm"]
-    ])
+    # ── Binance 现价：用于 COIN-M PNL → USD 换算 + 余额 USD 估值 ──
+    # COIN-M（币本位）的 realized_pnl 以「标的币」计价，不是 USD：
+    #   ADAUSD_PERP → realized_pnl 是 ADA 颗数，BTCUSD_PERP → BTC 数量；
+    #   USDM 则已是 USDT。三种单位不能直接相加（否则 -432 = ADA颗数+BTC+USDT，
+    #   没有物理意义）。必须先把 COIN-M 用标的币现价换算成 USD 再累加。
+    # 注：用「现价」近似换算，非成交当时价。精确版需按 trade_time 取历史 kline，
+    #     留作后续迭代（见 decision-log）。
+    from binance.client import Client
+    prices = {}
+    client = None
+    try:
+        client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
+        prices = {t["symbol"]: float(t["price"]) for t in client.get_all_tickers()}
+    except Exception as e:
+        print(f"[warning] 无法从 Binance 获取价格: {e}")
 
-    # 权益曲线：只含期货市场非零 PNL 点（Step 3 fix）
+    def to_usd(asset: str, amount: float) -> float | None:
+        if asset == "USDT":
+            return round(amount, 2)
+        pair = f"{asset}USDT"
+        if pair in prices:
+            return round(amount * prices[pair], 2)
+        return None
+
+    def realized_pnl_usd(trade) -> float | None:
+        """单笔期货 fill 的 realized_pnl 换算成 USD。
+        usdm  → 已是 USDT，原样返回。
+        coinm → 以标的币计价（margin_asset，如 ADA/BTC），乘现价换算。
+                缺现价时返回 None（宁可排除该笔，也不把币本位数量混进 USD 合计）。"""
+        pnl = float(trade.get("realized_pnl") or 0)
+        market = trade.get("market")
+        if market == "usdm":
+            return pnl
+        if market == "coinm":
+            coin = trade.get("margin_asset") or trade.get("symbol", "").replace("USD_PERP", "")
+            price = prices.get(f"{coin}USDT") if coin else None
+            return pnl * price if price is not None else None
+        return None
+
+    # ── 期货 PNL 合计 + 权益曲线（均换算为 USD 后累加）──
+    futures_pnl = 0.0
     equity_curve = []
     cum_pnl = 0.0
+    skipped = 0
     for trade in trades:
         if trade.get("market") not in ("usdm", "coinm"):
             continue
-        pnl = float(trade.get("realized_pnl") or 0)
-        if pnl == 0:
-            continue  # 跳过开仓 fill（PNL=0）
-        cum_pnl += pnl
+        usd = realized_pnl_usd(trade)
+        if usd is None:
+            skipped += 1
+            continue
+        futures_pnl += usd
+        if usd == 0:
+            continue  # 跳过开仓 fill（PNL=0），不画点
+        cum_pnl += usd
         equity_curve.append({
             "t": int(trade.get("trade_time", 0)),
             "cum": round(cum_pnl, 4),
         })
+    if skipped:
+        print(f"[warning] {skipped} 笔 COIN-M PNL 因缺现价无法换算 USD，已从核心数字排除")
 
-    # 从 Binance API 查询真实余额 + USD 换算（Step 4 fix）
-    from binance.client import Client
-    try:
-        client = Client(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
-
-        # 获取所有 ticker 价格用于 USD 换算
-        prices = {t["symbol"]: float(t["price"]) for t in client.get_all_tickers()}
-
-        def to_usd(asset: str, amount: float) -> float | None:
-            if asset == "USDT":
-                return round(amount, 2)
-            pair = f"{asset}USDT"
-            if pair in prices:
-                return round(amount * prices[pair], 2)
-            # 尝试反向（如 USDTBTC 不存在时用 BTCUSDT）
-            return None
-
-        balances = []
-
-        # USDM（灰尘过滤）
-        for b in client.futures_account_balance():
-            balance = float(b.get("balance", 0))
-            if balance > 0.001:
-                asset = b["asset"]
-                balances.append({
-                    "market": "usdm",
-                    "asset": asset,
-                    "free": balance,
-                    "locked": 0.0,
-                    "balance": balance,
-                    "usd_value": to_usd(asset, balance),
-                })
-
-        # COINM（灰尘过滤）
-        for b in client.futures_coin_account_balance():
-            balance = float(b.get("balance", 0))
-            if balance > 0.0001:
-                asset = b["asset"]
-                balances.append({
-                    "market": "coinm",
-                    "asset": asset,
-                    "free": balance,
-                    "locked": 0.0,
-                    "balance": balance,
-                    "usd_value": to_usd(asset, balance),
-                })
-    except Exception as e:
-        print(f"[warning] 无法从 Binance 查询余额: {e}")
-        balances = []
+    # ── 从 Binance 查询真实余额（复用上面的 client / prices / to_usd）──
+    balances = []
+    if client is not None:
+        try:
+            # USDM（灰尘过滤）
+            for b in client.futures_account_balance():
+                balance = float(b.get("balance", 0))
+                if balance > 0.001:
+                    asset = b["asset"]
+                    balances.append({
+                        "market": "usdm",
+                        "asset": asset,
+                        "free": balance,
+                        "locked": 0.0,
+                        "balance": balance,
+                        "usd_value": to_usd(asset, balance),
+                    })
+            # COINM（灰尘过滤）
+            for b in client.futures_coin_account_balance():
+                balance = float(b.get("balance", 0))
+                if balance > 0.0001:
+                    asset = b["asset"]
+                    balances.append({
+                        "market": "coinm",
+                        "asset": asset,
+                        "free": balance,
+                        "locked": 0.0,
+                        "balance": balance,
+                        "usd_value": to_usd(asset, balance),
+                    })
+        except Exception as e:
+            print(f"[warning] 无法从 Binance 查询余额: {e}")
+            balances = []
 
     return {
         "balances": balances,
