@@ -112,11 +112,16 @@ def normalize_usdm(t):
 
 
 def normalize_coinm(t):
-    # COIN-M: qty 是合约张数，baseQty 才是币量；无 quoteQty
+    # COIN-M（反向合约）: qty=合约张数、baseQty=币量、无 quoteQty。
+    #   qty_base  ← baseQty（币量），realized_pnl 以标的币计价亦同单位。
+    #   quote_qty ← qty（合约张数）：反向合约的「部位量」是张数，不是币量；币量在开/平价
+    #     不同时不守恒。api.py::build_positions_from_fills 的 _qty_unit 对 COIN-M 取
+    #     quote_qty 做净部位配对，故此处必须把张数写进 quote_qty（与 CSV 匯入一致），
+    #     否则 SDK 同步入库的 COIN-M fill 张数为 NULL → 聚合失效。
     return (
         EXCHANGE, "coinm", t["symbol"], int(t["id"]), int(t.get("orderId", 0)),
         t["side"],
-        _f(t["price"]), _f(t.get("baseQty")), None,
+        _f(t["price"]), _f(t.get("baseQty")), _f(t.get("qty")),
         _f(t.get("realizedPnl")), t.get("marginAsset"), t.get("positionSide"),
         _f(t.get("commission")), t.get("commissionAsset"),
         bool(t["maker"]), int(t["time"]),

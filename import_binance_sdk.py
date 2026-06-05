@@ -349,8 +349,13 @@ def main():
                 'orderId': trade.get('orderId'),
                 'side': trade['side'],
                 'price': trade['price'],
+                # COIN-M（反向合约）: baseQty=币量、qty=合约张数。
+                #   qty_base  ← baseQty（币量，realized_pnl 同单位）
+                #   quote_qty ← qty（合约张数）：净部位配对的「部位量」是张数，不是币量
+                #     （见 api.py::_qty_unit / normalize_coinm）。若留 None，insert_trade 会
+                #     回退成 price×币量=USD notional，张数遗失 → 聚合失效。
                 'qty': trade.get('baseQty', trade.get('qty', 0)),
-                'quoteQty': None,
+                'quoteQty': trade.get('qty'),
                 'realizedPnl': float(trade.get('realizedPnl', 0)),
                 'marginAsset': trade.get('marginAsset'),
                 'positionSide': trade.get('positionSide'),

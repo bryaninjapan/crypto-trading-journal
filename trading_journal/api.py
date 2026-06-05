@@ -103,77 +103,70 @@ def _pnl_to_usd(pnl, asset, prices):
     return round(pnl * price, 2) if price is not None else None
 
 
-# ─── Position Aggregation (fills → trades，FIFO 配對) ──────────────────────────
-# 模型（對標 CoinMarketMan）：把每個平倉 fill 依 FIFO 與最早的開倉 fill 配對，每一段
-# 「一個開倉 fill × 一個平倉 fill」的配對量 = 一筆已平交易（closed trade）。CMM 實測：
-# trade #376 = SELL@75934.7(27/May 開空) + BUY@73405.3(30/May 平空)，open 永遠早於 close。
+# ─── Position Aggregation (fills → trades，淨部位配對) ─────────────────────────
+# 模型（對標使用者驗證過的 process_trades_v7）：每個平倉「事件」吸收它依時間序消耗的
+# 反向開倉事件 = 一筆已平交易。平倉錨 = realized_pnl != 0（Binance 只在平倉結算 PNL）。
+# 詳見 build_positions_from_fills docstring。
 #
-# 為什麼改掉舊的「累積 qty 歸零」狀態機（解掉 4 個症狀）：
-#   1) 絕對 tolerance 1e-3 對不同幣量級失效：BTCUSD（qty 0.001~0.04）被亂切成 7 個錯誤
-#      position；ADAUSD（qty 39~9770）一次都切不動，70 筆全黏成 1 坨。
-#   2) 把「平掉舊單(BUY) + 開新單(SELL)」黏成同一假 position → open_time(開倉 SELL) 晚於
-#      close_time(平倉 BUY) = 時光穿越（7 個 BTCUSD position 全穿越）。
-#   3) PNL 出現在時間序第一筆（其實是平倉），看起來像開倉就有 PNL。
-#   4) 未平倉殘量被當成假交易混進清單。
-# FIFO 模型天然保證 open_time ≤ close_time（被配對的開倉 lot 必早於平倉 fill 進佇列），
-# 且與幣量級無關。
-#
-# 方向（多空）一律採用 Binance 權威欄位 position_side（commit cbba99f）：
-#   SHORT 倉：SELL=開倉、BUY=平倉；LONG 倉：BUY=開倉、SELL=平倉。
-# 只有 position_side 缺失 / BOTH（USDM 單向模式舊資料）時，才退回依當前淨部位推斷。
+# 關鍵單位（曾是 2x 顆粒度與幽靈未平倉的根因）：
+#   COIN-M 反向合約的部位量是「合約張數」(quote_qty)，不是幣量(qty_base)——幣量在開/平
+#   價不同時不守恆（開空 284 張 @0.825 = 3442 幣，平回 284 張 @0.235 = 14650 幣），會使
+#   配對碎裂並造出假未平倉殘量。USD-M 線性合約則 qty_base 即張數=幣量。見 _qty_unit。
+# 方向：開倉 BUY→Long / SELL→Short；平倉吸收的反向開倉決定該筆方向。
 
 
 def _seg_float(v):
     return float(v) if v is not None else 0.0
 
 
-def _classify(fill, books):
-    """判定一筆 fill 屬於哪個 book（LONG/SHORT）以及是開倉還是平倉。
+def _qty_unit(f):
+    """部位數量單位：COIN-M 反向合約以「合約張數」(quote_qty) 計，USD-M 線性合約以
+    qty_base（=幣量=張數）。COIN-M 用幣量(qty_base) 會使開平不守恆、配對碎裂 —— 這是
+    舊版 build_positions_from_fills 2x 顆粒度與幽靈未平倉的根因（見 DECISION-LOG）。"""
+    v = f.get("quote_qty") if f.get("market") == "coinm" else f.get("qty_base")
+    return _seg_float(v)
 
-    優先用 position_side；本資料集 position_side 100% NULL，故以 realized_pnl 為平倉錨：
-    Binance 只在平倉結算 PNL，realized_pnl != 0 可靠標記平倉 fill。
-    方向由 side 推：平倉 BUY→平 SHORT / SELL→平 LONG；開倉 BUY→開 LONG / SELL→開 SHORT。
-    回傳 (book, is_open)。
+
+def _build_position(market, symbol, book, consumed, close_ev, is_orphan=False):
+    """把「一個平倉事件 + 它消耗的開倉事件們」組成一筆已平交易（對標 v7：一個平倉事件
+    = 一筆 trade，多個被消耗的開倉合併成加權均價的單一進場）。
+
+    consumed = [(open_event, taken_qty), ...]（orphan close 時為空）。
+    realized_pnl/fee 取該平倉事件的全額（每個平倉事件只產生一筆交易，故全資料集守恆）；
+    開倉手續費按被消耗比例分攤。id = 平倉事件首筆 fill 的 row id * 1000（detail 可反推）。
     """
-    side = fill.get("side")
-    ps = fill.get("position_side")
-    if ps in ("LONG", "SHORT"):
-        is_open = (ps == "LONG" and side == "BUY") or (ps == "SHORT" and side == "SELL")
-        return ps, is_open
-    # position_side 缺失：以 realized_pnl 為平倉錨（不靠 net-position 猜開平）。
-    is_close = abs(_seg_float(fill.get("realized_pnl"))) > 1e-12
-    if is_close:
-        return ("SHORT" if side == "BUY" else "LONG"), False
-    return ("LONG" if side == "BUY" else "SHORT"), True
+    EPS = 1e-9
+    close_time = close_ev["time"]
+    close_fill0 = close_ev["fills"][0]
 
-
-def _build_segment(market, symbol, book, open_fill, close_fill, matched_qty,
-                   pnl_share, fee_share, seg_id, is_orphan=False):
-    """把一段 FIFO 配對（一個開倉 fill × 一個平倉 fill）組成一筆已平交易 dict。
-
-    open_fill 為 None 代表 orphan close（窗口前就開、佇列無對應開倉 lot）：open_time
-    退回平倉時間（保證 open ≤ close），avg_entry/開倉資訊缺省，標記 is_orphan_close。
-    回傳 dict 內含 fills=[開倉, 平倉]（時間順），供 detail 端點展開。
-    """
-    close_time = int(close_fill.get("trade_time", 0))
-    if open_fill is not None:
-        open_time     = int(open_fill.get("trade_time", 0))
-        avg_entry     = round(_seg_float(open_fill.get("price")), 6)
-        open_trade_id = open_fill.get("trade_id")
-        margin_asset  = open_fill.get("margin_asset") or close_fill.get("margin_asset")
-        seg_fills     = [open_fill, close_fill]
+    if consumed:
+        tot   = sum(t for _e, t in consumed)
+        entry = (sum(e["price"] * t for e, t in consumed) / tot) if tot > EPS else 0.0
+        open_ev0      = consumed[0][0]
+        open_time     = open_ev0["time"]
+        open_trade_id = open_ev0["fills"][0].get("trade_id")
+        margin_asset  = (open_ev0["fills"][0].get("margin_asset")
+                         or close_fill0.get("margin_asset"))
+        open_fee      = sum(e["fee"] * (t / e["qty"]) for e, t in consumed if e["qty"] > EPS)
+        open_fills    = [rf for e, _t in consumed for rf in e["fills"]]
+        qty           = tot
+        avg_entry     = round(entry, 6)
     else:
-        open_time     = close_time          # orphan：無開倉時間，退回平倉時間
+        open_time     = close_time          # orphan close：無開倉事件，退回平倉時間
+        open_trade_id = close_fill0.get("trade_id")
+        margin_asset  = close_fill0.get("margin_asset")
+        open_fee      = 0.0
+        open_fills    = []
+        qty           = close_ev["qty"]
         avg_entry     = None
-        open_trade_id = close_fill.get("trade_id")
-        margin_asset  = close_fill.get("margin_asset")
-        seg_fills     = [close_fill]
 
     pnl_asset = margin_asset or "USDT"
-    fee_asset = close_fill.get("fee_asset") or pnl_asset
+    fee_asset = close_fill0.get("fee_asset") or pnl_asset
+    seg_fills = sorted(open_fills + close_ev["fills"],
+                       key=lambda f: (f.get("trade_time", 0), f.get("id", 0)))
 
     return {
-        "id":              seg_id,
+        "id":              close_fill0.get("id", 0) * 1000,
         "market":          market,
         "symbol":          symbol,
         "direction":       "Short" if book == "SHORT" else "Long",
@@ -181,14 +174,14 @@ def _build_segment(market, symbol, book, open_fill, close_fill, matched_qty,
         "open_time":       open_time,
         "close_time":      close_time,
         "hold_ms":         close_time - open_time,
-        "qty":             round(matched_qty, 8),
+        "qty":             round(qty, 8),
         "avg_entry":       avg_entry,
-        "avg_exit":        round(_seg_float(close_fill.get("price")), 6),
-        "realized_pnl":    round(pnl_share, 6),
+        "avg_exit":        round(close_ev["price"], 6),
+        "realized_pnl":    round(close_ev["pnl"], 6),
         "pnl_asset":       pnl_asset,
         "is_estimated":    False,
         "is_orphan_close": is_orphan,
-        "fees":            round(fee_share, 8),
+        "fees":            round(open_fee + close_ev["fee"], 8),
         "fee_asset":       fee_asset,
         "funding":         0.0,
         "num_fills":       len(seg_fills),
@@ -196,83 +189,31 @@ def _build_segment(market, symbol, book, open_fill, close_fill, matched_qty,
     }
 
 
-def _preaggregate_by_order(fills):
-    """order_id 預聚合：交易所把一張 order 分批成交（COIN-M 實測 29 張 order → 110 筆
-    fill，同價同毫秒），raw fill 層級配對會把一張開倉單當成 N 個 lot，產生 N 筆 open/
-    close/price 完全相同、只有 qty 不同的重複交易。FIFO 配對的正確單位是 order，不是 fill
-    （對標 CMM 的「Avg Fill Price / Size」＝先合併同單 fill）。
-
-    依 (market, symbol, order_id, side) 分組，每組併成一筆 synthetic fill：
-      - qty_base    = Σ qty_base
-      - price       = Σ(price×qty_base) / Σ qty_base（加權均價）
-      - realized_pnl= Σ realized_pnl
-      - fee         = Σ fee
-      - trade_time  = 該 order 最後一筆 fill 的時間（= 完全成交時間）
-      - id / trade_id = 取該 order 第一筆 fill（代表性，保證 detail 端點可由 id 反查回
-        (market, symbol) 並重現同一 synthetic fill）
-      - side / position_side / margin_asset / symbol / market 等同組一致，沿用第一筆。
-
-    order_id 為 None 的舊資料 → 每筆各自獨立（不合併），避免 None 全併成一坨。
-    回傳 synthetic fills list，餵給下游 FIFO（配對邏輯完全不動）。
-    """
-    from collections import defaultdict
-
-    grouped = defaultdict(list)
-    singles = []
-    for f in fills:
-        oid = f.get("order_id")
-        if oid is None:
-            singles.append(f)
-            continue
-        grouped[(f.get("market"), f.get("symbol"), oid, f.get("side"))].append(f)
-
-    out = list(singles)
-    for _key, order_fills in grouped.items():
-        if len(order_fills) == 1:
-            out.append(order_fills[0])
-            continue
-        ordered = sorted(order_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
-        rep = dict(ordered[0])                       # 代表性 fill（id / trade_id / 共同欄位）
-        total_qty = sum(_seg_float(f.get("qty_base")) for f in ordered)
-        if total_qty > 0:
-            vwap = sum(_seg_float(f.get("price")) * _seg_float(f.get("qty_base"))
-                       for f in ordered) / total_qty
-        else:
-            vwap = _seg_float(rep.get("price"))
-        rep["qty_base"]     = total_qty
-        rep["price"]        = vwap
-        rep["realized_pnl"] = sum(_seg_float(f.get("realized_pnl")) for f in ordered)
-        rep["fee"]          = sum(_seg_float(f.get("fee")) for f in ordered)
-        rep["trade_time"]   = ordered[-1].get("trade_time", rep.get("trade_time"))
-        out.append(rep)
-
-    return out
-
-
 def build_positions_from_fills(fills):
-    """將 fills 依 (market, symbol) 分組，用 FIFO 把每個平倉 fill 配對最早的開倉 fill，
-    每段配對產生一筆已平交易（closed trade）。
+    """將 fills 依 (market, symbol) 分組，用「淨部位配對」把每個平倉事件吸收它消耗的
+    開倉事件，產生一筆已平交易（closed trade）。對標使用者驗證過的 process_trades_v7。
 
-    前置：先做 order_id 預聚合（_preaggregate_by_order），把同一張 order 被交易所拆成
-    多筆的 fill 併回 order 層級，再餵給 FIFO，避免一張單被當 N 個 lot 產生重複交易。
+    流程（每個 symbol）：
+      1. 事件化：同 (trade_time, side, is_close) 的 raw fill 併成一個事件（加權均價、
+         Σqty、Σpnl、Σfee）。is_close 以 realized_pnl != 0 為錨（Binance 只在平倉結算 PNL）。
+         配對單位是「事件」不是 raw fill —— 交易所把一張單拆成多筆同毫秒 fill。
+      2. 數量單位：COIN-M 用合約張數(quote_qty)、USD-M 用 qty_base（見 _qty_unit）。
+      3. 淨部位配對：每個平倉事件依時間序消耗最早的反向開倉事件；一個平倉事件 = 一筆
+         交易（消耗的多個開倉合併成加權均價進場）。一張大開倉被多次平倉 → 拆成多筆
+         交易（每次平倉一筆），這是正確顆粒度，取代舊 FIFO「每 lot×平倉一段」的 2x 碎裂。
 
     每筆交易：
-      - open_time = 配對到的開倉 fill 時間；close_time = 該平倉 fill 時間（open ≤ close）。
-      - qty = 該段配對量；avg_entry = 開倉價；avg_exit = 平倉價。
-      - realized_pnl = 平倉 fill 的 realized_pnl 按配對量比例分攤（開倉 fill PNL=0）；
-        分攤後全段加總 == 平倉 fill 原始 PNL，故總 PNL 與逐筆 fill 加總一致。
-      - id = 平倉 fill 的 row id * 1000 + 段序號（全域唯一、可由 detail 反推）。
-      - fills = [開倉 fill, 平倉 fill]（orphan 只含平倉），供前端展開。
+      - open_time = 第一個被消耗開倉事件的時間；close_time = 平倉事件時間。
+      - qty = 被消耗開倉量合計（COIN-M 為張數）；avg_entry/avg_exit = 量加權均價。
+      - realized_pnl = 平倉事件全額 PNL（每事件只記一次 → 全資料集守恆）。
+      - id = 平倉事件首筆 fill 的 row id * 1000（detail 端點可反推 (market, symbol)）。
 
     殘量處理：
-      - 窗口結束佇列仍有開倉殘量（如 ADAUSD 殘 ~9721 ADA）= 未平倉，不產生 closed trade，
-        排除在 Trade History 外（不做 open position UI）。
-      - 平倉量超出佇列現有開倉量 = orphan close（窗口前就開、無對應開倉 fill），仍產生一筆
-        交易（is_orphan_close=True），避免丟資料。
+      - 平倉事件無對應反向開倉可消耗 = orphan close（窗口前就開），仍記一筆
+        （is_orphan_close=True）避免丟 PNL。
+      - 視窗結束佇列仍有開倉殘量 = 未平倉部位，不產生 closed trade（無 open position UI）。
     """
-    from collections import defaultdict, deque
-
-    fills = _preaggregate_by_order(fills)
+    from collections import defaultdict, OrderedDict
 
     groups = defaultdict(list)
     for f in fills:
@@ -282,97 +223,57 @@ def build_positions_from_fills(fills):
     positions = []
 
     for (market, symbol), group_fills in groups.items():
-        # 複合排序鍵：trade_time 為主，id（trades 表單調主鍵）為 tie-breaker，確保同毫秒
-        # 大量 fill（COIN-M 常見）的順序與 SQL 物理回傳順序無關、完全確定。
         group_fills = sorted(group_fills, key=lambda x: (x.get("trade_time", 0), x.get("id", 0)))
 
-        # 每個 book 維護開倉 lot 佇列：deque of [剩餘qty, open_fill]
-        books = {"LONG": deque(), "SHORT": deque()}
-
+        # ── 1+2. 事件化（同 time/side/is_close 併一筆，量用市場對應單位）──
+        ev_map = OrderedDict()
         for f in group_fills:
-            book, is_open = _classify(f, books)
-            qty = _seg_float(f.get("qty_base"))
-            if qty <= 0:
+            is_close = abs(_seg_float(f.get("realized_pnl"))) > 1e-12
+            key = (int(f.get("trade_time", 0)), f.get("side"), is_close)
+            ev = ev_map.get(key)
+            if ev is None:
+                ev = {"time": key[0], "side": key[1], "is_close": is_close,
+                      "qty": 0.0, "pxw": 0.0, "pnl": 0.0, "fee": 0.0, "fills": []}
+                ev_map[key] = ev
+            q = _qty_unit(f)
+            ev["qty"] += q
+            ev["pxw"] += q * _seg_float(f.get("price"))
+            ev["pnl"] += _seg_float(f.get("realized_pnl"))
+            ev["fee"] += _seg_float(f.get("fee"))
+            ev["fills"].append(f)
+        events = sorted(ev_map.values(),
+                        key=lambda e: (e["time"], e["fills"][0].get("id", 0)))
+        for e in events:
+            e["price"] = (e["pxw"] / e["qty"]) if e["qty"] > EPS else 0.0
+
+        # ── 3. 淨部位配對 ──
+        open_entries = []  # [{side, remaining, event}]
+        for ev in events:
+            if not ev["is_close"]:
+                if ev["qty"] > EPS:
+                    open_entries.append({"side": ev["side"], "remaining": ev["qty"], "event": ev})
                 continue
-
-            if is_open:
-                books[book].append([qty, f])
-                continue
-
-            # 平倉 fill：依 FIFO 消耗該 book 最早的開倉 lot
-            lots        = books[book]
-            close_total = qty
-            close_pnl   = _seg_float(f.get("realized_pnl"))
-            close_fee   = _seg_float(f.get("fee"))
-            close_row   = f.get("id", 0)
-            remaining   = qty
-            seg_idx     = 0
-
-            while remaining > EPS and lots:
-                lot       = lots[0]
-                open_fill = lot[1]
-                matched   = min(remaining, lot[0])
-                open_total = _seg_float(open_fill.get("qty_base")) or matched
-                open_fee   = _seg_float(open_fill.get("fee"))
-                # 平倉 PNL/手續費按配對量比例分攤；開倉手續費按其被消耗比例分攤
-                pnl_share = close_pnl * (matched / close_total)
-                fee_share = (open_fee * (matched / open_total)
-                             + close_fee * (matched / close_total))
-                positions.append(_build_segment(
-                    market, symbol, book, open_fill, f, matched,
-                    pnl_share, fee_share, close_row * 1000 + seg_idx))
-                seg_idx    += 1
-                lot[0]     -= matched
-                remaining  -= matched
-                if lot[0] <= EPS:
-                    lots.popleft()
-
-            if remaining > EPS:
-                # orphan close：窗口前開倉，無對應 open lot，仍記一筆避免丟資料
-                pnl_share = close_pnl * (remaining / close_total)
-                fee_share = close_fee * (remaining / close_total)
-                positions.append(_build_segment(
-                    market, symbol, book, None, f, remaining,
-                    pnl_share, fee_share, close_row * 1000 + seg_idx, is_orphan=True))
+            opp = "SELL" if ev["side"] == "BUY" else "BUY"
+            need = ev["qty"]
+            consumed = []
+            for oe in open_entries:
+                if oe["side"] == opp and need > EPS and oe["remaining"] > EPS:
+                    take = min(need, oe["remaining"])
+                    need -= take
+                    oe["remaining"] -= take
+                    consumed.append((oe["event"], take))
+            open_entries = [oe for oe in open_entries if oe["remaining"] > EPS]
+            if consumed:
+                book = "LONG" if consumed[0][0]["side"] == "BUY" else "SHORT"
+                positions.append(_build_position(market, symbol, book, consumed, ev))
+            elif need > EPS:
+                # orphan close：無對應開倉可消耗，仍記一筆（方向由平倉 side 反推）
+                book = "SHORT" if ev["side"] == "BUY" else "LONG"
+                positions.append(_build_position(market, symbol, book, [], ev, is_orphan=True))
 
         # 佇列殘餘 = 未平倉，刻意不產生 closed trade
 
-    return _merge_same_roundtrip(positions)
-
-
-def _merge_same_roundtrip(positions):
-    """FIFO 後的二次去重：同一張開倉單被多張平倉單（同價、同毫秒）平掉時，FIFO 會
-    把該開倉單拆給每張平倉單，產生多筆 open/close 的 time+price 完全相同、只有 qty
-    不同的段（例 METISUSDT 一張 4.0 開倉單被兩張 @9.86 同毫秒平倉單平掉 → 兩段）。
-    這在 UI 上與 fill 切片重複無異，故依 (market, symbol, direction, open_time,
-    avg_entry, close_time, avg_exit, is_orphan_close) 合併成一筆：qty/realized_pnl/
-    fees 加總，fills 去重（共用的開倉單只算一次），id 取最小者（deterministic，
-    detail 端點重跑同一流程可重現）。FIFO 配對本身完全不動。
-    """
-    from collections import OrderedDict
-
-    merged = OrderedDict()
-    for p in positions:
-        key = (p["market"], p["symbol"], p["direction"], p["open_time"],
-               p.get("avg_entry"), p["close_time"], p.get("avg_exit"),
-               p.get("is_orphan_close"))
-        if key not in merged:
-            merged[key] = p
-            continue
-        m = merged[key]
-        m["qty"]          = round(m["qty"] + p["qty"], 8)
-        m["realized_pnl"] = round(m["realized_pnl"] + p["realized_pnl"], 6)
-        m["fees"]         = round(m["fees"] + p["fees"], 8)
-        m["id"]           = min(m["id"], p["id"])
-        seen = {f.get("id") for f in m["fills"]}
-        for f in p["fills"]:                      # 共用開倉單在多段重複，依 row id 去重
-            if f.get("id") not in seen:
-                m["fills"].append(f)
-                seen.add(f.get("id"))
-        m["fills"].sort(key=lambda f: (f.get("trade_time", 0), f.get("id", 0)))
-        m["num_fills"] = len(m["fills"])
-
-    return list(merged.values())
+    return positions
 
 
 # ─── /api/summary ──────────────────────────────────────────────────────────────
@@ -793,8 +694,13 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     else:
         time_span_days = 1
 
-    # 成交量（USD notional）：USD-M 用 quote_qty；COIN-M 無 quote_qty，回退 price*qty_base
+    # 成交量（USD notional）：
+    #   USD-M  → quote_qty 即 USDT notional。
+    #   COIN-M → quote_qty 是「合約張數」(非 USD，見 _qty_unit / normalize_coinm)，
+    #            USD notional = price(USD/幣) × qty_base(幣量)。
     def _notional(t):
+        if t.get("market") == "coinm":
+            return abs(float(t.get("price", 0)) * float(t.get("qty_base", 0)))
         qq = t.get("quote_qty")
         if qq is not None:
             return abs(float(qq))
