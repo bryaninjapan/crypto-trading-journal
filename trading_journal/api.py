@@ -130,8 +130,9 @@ def _seg_float(v):
 def _classify(fill, books):
     """判定一筆 fill 屬於哪個 book（LONG/SHORT）以及是開倉還是平倉。
 
-    優先用 position_side；缺失 / BOTH 時（單向模式舊資料）依當前佇列淨部位推斷：
-    BUY 先平 SHORT 否則開 LONG；SELL 先平 LONG 否則開 SHORT。
+    優先用 position_side；本資料集 position_side 100% NULL，故以 realized_pnl 為平倉錨：
+    Binance 只在平倉結算 PNL，realized_pnl != 0 可靠標記平倉 fill。
+    方向由 side 推：平倉 BUY→平 SHORT / SELL→平 LONG；開倉 BUY→開 LONG / SELL→開 SHORT。
     回傳 (book, is_open)。
     """
     side = fill.get("side")
@@ -139,10 +140,11 @@ def _classify(fill, books):
     if ps in ("LONG", "SHORT"):
         is_open = (ps == "LONG" and side == "BUY") or (ps == "SHORT" and side == "SELL")
         return ps, is_open
-    # 單向模式 fallback（本資料集無此情形，保留以防未來 BOTH/NULL 資料）
-    if side == "BUY":
-        return ("SHORT", False) if books["SHORT"] else ("LONG", True)
-    return ("LONG", False) if books["LONG"] else ("SHORT", True)
+    # position_side 缺失：以 realized_pnl 為平倉錨（不靠 net-position 猜開平）。
+    is_close = abs(_seg_float(fill.get("realized_pnl"))) > 1e-12
+    if is_close:
+        return ("SHORT" if side == "BUY" else "LONG"), False
+    return ("LONG" if side == "BUY" else "SHORT"), True
 
 
 def _build_segment(market, symbol, book, open_fill, close_fill, matched_qty,
