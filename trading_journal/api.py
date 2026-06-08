@@ -160,7 +160,15 @@ def _build_position(market, symbol, book, consumed, close_ev, is_orphan=False):
         qty           = close_ev["qty"]
         avg_entry     = None
 
-    pnl_asset = margin_asset or "USDT"
+    # pnl_asset = realized_pnl / funding 的計價幣。本資料集 margin_asset 全 NULL，故 COIN-M
+    # 需由 symbol 反推標的幣（ADAUSD_PERP→ADA、BTCUSD_PERP→BTC），否則會誤標成 USDT、
+    # 使 list/detail 的 realized_pnl_usd / funding_usd 不換算（COIN-M 顆數被當 USDT）。
+    if margin_asset:
+        pnl_asset = margin_asset
+    elif market == "coinm":
+        pnl_asset = symbol.split("USD")[0]
+    else:
+        pnl_asset = "USDT"
     fee_asset = close_fill0.get("fee_asset") or pnl_asset
     seg_fills = sorted(open_fills + close_ev["fills"],
                        key=lambda f: (f.get("trade_time", 0), f.get("id", 0)))
@@ -189,7 +197,50 @@ def _build_position(market, symbol, book, consumed, close_ev, is_orphan=False):
     }
 
 
-def build_positions_from_fills(fills):
+def _attach_funding(positions, income_rows):
+    """把 FUNDING_FEE 流水歸進各 position 的 funding（單位同 pnl_asset：COIN-M 標的幣、USD-M USDT）。
+
+    歸屬規則：每筆 funding 指派給同 symbol「close_time >= funding.trade_time 的最早平倉交易」
+    （= 該筆資金費由其後第一筆平倉認列）。如此每筆 funding 只算一次、Σfunding 守恆，且不會
+    因 per-平倉事件顆粒度的重疊時間窗而重複計。發生在該 symbol 最後平倉之後的 funding（仍持倉）
+    無人認領 → 略過（屬未平倉部位，本表本就不顯示）。
+    """
+    import bisect
+    from collections import defaultdict
+    if not income_rows:
+        return
+    by_sym = defaultdict(list)
+    for p in positions:
+        if p.get("close_time") is not None:
+            by_sym[p["symbol"]].append(p)
+    closes = {}
+    for sym, plist in by_sym.items():
+        plist.sort(key=lambda p: p["close_time"])
+        closes[sym] = [p["close_time"] for p in plist]
+    for r in income_rows:
+        sym = r.get("symbol")
+        plist = by_sym.get(sym)
+        if not plist:
+            continue
+        t = int(r.get("trade_time") or 0)
+        i = bisect.bisect_left(closes[sym], t)
+        if i < len(plist):
+            plist[i]["funding"] = round((plist[i].get("funding") or 0.0) + float(r.get("amount") or 0), 8)
+
+
+def _load_funding(symbol=None):
+    """讀 binance_income 的 FUNDING_FEE 流水（symbol 給定則只取該 symbol）。表不存在則回空。"""
+    try:
+        if symbol:
+            return rows("SELECT symbol, amount, trade_time FROM binance_income "
+                        "WHERE trans_type='FUNDING_FEE' AND symbol=%s", (symbol,))
+        return rows("SELECT symbol, amount, trade_time FROM binance_income "
+                    "WHERE trans_type='FUNDING_FEE'")
+    except Exception:
+        return []
+
+
+def build_positions_from_fills(fills, income_rows=None):
     """將 fills 依 (market, symbol) 分組，用「淨部位配對」把每個平倉事件吸收它消耗的
     開倉事件，產生一筆已平交易（closed trade）。對標使用者驗證過的 process_trades_v7。
 
@@ -273,6 +324,8 @@ def build_positions_from_fills(fills):
 
         # 佇列殘餘 = 未平倉，刻意不產生 closed trade
 
+    # 傳入 income 流水時，把 FUNDING_FEE 歸進各 position 的 funding（不傳則 funding 維持 0.0）。
+    _attach_funding(positions, income_rows)
     return positions
 
 
@@ -284,7 +337,7 @@ def summary():
 
     # 用聚合後 positions 計算 total_positions 和 win_rate（Step 5 fix）
     futures_fills = [t for t in trades if t.get("market") in ("usdm", "coinm")]
-    agg_positions = build_positions_from_fills(futures_fills)
+    agg_positions = build_positions_from_fills(futures_fills, _load_funding())
     # 只計已平倉 position（與 Journal 的 status=closed 口徑一致）；
     # 未平倉部位不計入 Dashboard 的 Total Trades。
     total_positions = len([p for p in agg_positions if p.get("close_time") is not None])
@@ -412,7 +465,7 @@ def list_positions(
     # Step 5 fix: 聚合 fills → positions
     sql = "SELECT * FROM trades WHERE market IN ('usdm','coinm') ORDER BY trade_time ASC, id ASC"
     all_fills = rows(sql)
-    all_positions = build_positions_from_fills(all_fills)
+    all_positions = build_positions_from_fills(all_fills, _load_funding())
 
     # 過濾
     if market:
@@ -440,6 +493,7 @@ def list_positions(
     for p in data:
         p.pop("fills", None)  # 清單不展開 fills（raw fill dict 含 Decimal/datetime），detail 才用
         p["realized_pnl_usd"] = _pnl_to_usd(p.get("realized_pnl"), p.get("pnl_asset"), prices)
+        p["funding_usd"] = _pnl_to_usd(p.get("funding"), p.get("pnl_asset"), prices)
 
     return {"total": total, "limit": limit, "offset": offset, "positions": data}
 
@@ -462,7 +516,7 @@ def position_detail(trade_id: int):
 
     # 聚合並用合成 id 找出該段交易；build_positions_from_fills 已把配對到的開倉/平倉
     # fill 掛在 position["fills"]（時間順：開倉在前、平倉在後）。
-    positions = build_positions_from_fills(same_symbol)
+    positions = build_positions_from_fills(same_symbol, _load_funding(anchor["symbol"]))
     target = next((p for p in positions if p["id"] == trade_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Position not found")
@@ -474,6 +528,7 @@ def position_detail(trade_id: int):
     target["realized_pnl_usd"] = _pnl_to_usd(
         target.get("realized_pnl"), target.get("pnl_asset"), prices
     )
+    target["funding_usd"] = _pnl_to_usd(target.get("funding"), target.get("pnl_asset"), prices)
 
     return {
         **target,
@@ -598,8 +653,9 @@ def analytics(market: str = Query("usdm", pattern="^(usdm|coinm)$")):
     #      W/L，wins+losses 永遠對不上 count；
     #   2) count 的方向曾用「首筆 fill side」啟發式推斷，COIN-M 空單（SELL 開→BUY
     #      平）若抓取窗口從平倉 BUY 開始，首筆是 BUY → 被誤判成 LONG，憑空生出假
-    #      多頭回合。現已改為優先採用 Binance 權威欄位 position_side（見 _classify）。
-    # 改為：方向一律用 position 的 direction，勝負一律看 position 淨 realized_pnl 正負。
+    #      多頭回合。現已改為以 realized_pnl != 0 為平倉錨的淨部位配對（見 build_positions_from_fills）。
+    # 方向一律用 position 的 direction，勝負一律看 position 淨 realized_pnl 正負。
+    # 註：此處不需 per-position funding，故不傳 income（funding 維持 0，不影響 pnl 統計）。
     agg_positions = build_positions_from_fills(trades)
 
     # ── Binance 现价：COIN-M position realized_pnl → USD 换算 ──
