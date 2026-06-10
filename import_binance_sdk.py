@@ -47,7 +47,6 @@ class DataProcessor:
     def clear_trades(self):
         cur = self.conn.cursor()
         cur.execute("DELETE FROM trades")
-        cur.execute("DELETE FROM positions")
         self.conn.commit()
         print("[✓] 已清空旧数据")
 
@@ -93,7 +92,7 @@ class DataProcessor:
                 (exchange, market, symbol, trade_id, order_id, side, price, qty_base,
                  quote_qty, realized_pnl, margin_asset, position_side, fee, fee_asset, is_maker, trade_time)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (trade_id) DO NOTHING
+                ON CONFLICT (exchange, market, symbol, trade_id) DO NOTHING
             """
             execute_batch(cur, sql, self.trades_buffer, page_size=500)
             self.conn.commit()
