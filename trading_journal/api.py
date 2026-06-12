@@ -141,7 +141,6 @@ def _build_position(market, symbol, book, consumed, close_ev, is_orphan=False):
 
     if consumed:
         tot   = sum(t for _e, t in consumed)
-        entry = (sum(e["price"] * t for e, t in consumed) / tot) if tot > EPS else 0.0
         open_ev0      = consumed[0][0]
         open_time     = open_ev0["time"]
         open_trade_id = open_ev0["fills"][0].get("trade_id")
@@ -150,7 +149,13 @@ def _build_position(market, symbol, book, consumed, close_ev, is_orphan=False):
         open_fee      = sum(e["fee"] * (t / e["qty"]) for e, t in consumed if e["qty"] > EPS)
         open_fills    = [rf for e, _t in consumed for rf in e["fills"]]
         qty           = tot
-        avg_entry     = round(entry, 6)
+        # 進場價 = 由官方 realized_pnl 反算的均價成本基準：avg_exit − pnl/(qty×dir)。
+        # 與 avg_exit/realized_pnl 自洽（殘差 ~1e-12），對標 process_avgcost.py 的
+        # entry-from-pnl。舊版用「被消耗開倉的量加權均價」是 FIFO 基準，與均價制的
+        # realized_pnl 矛盾（BTC 173 筆出現「5萬買、11萬賣卻虧損」的失真）。
+        dir_val       = -1.0 if book == "SHORT" else 1.0
+        avg_entry     = (round(close_ev["price"] - close_ev["pnl"] / (qty * dir_val), 6)
+                         if qty > EPS else None)
     else:
         open_time     = close_time          # orphan close：無開倉事件，退回平倉時間
         open_trade_id = close_fill0.get("trade_id")
