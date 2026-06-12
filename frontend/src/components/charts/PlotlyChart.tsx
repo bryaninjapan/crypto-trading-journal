@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import Plotly from "plotly.js-dist-min";
+
+// Use global Plotly from CDN (loaded in index.html)
+const Plotly = (window as any).Plotly;
 
 type Trace = Record<string, unknown>;
 type Layout = Record<string, unknown>;
@@ -14,6 +16,12 @@ const DARK_LAYOUT: Layout = {
   yaxis: { gridcolor: "rgba(255,255,255,0.06)", zeroline: false },
   legend: { orientation: "h", y: -0.2, font: { color: "#c7c4d7" } },
   showlegend: false,
+  hovermode: "x unified",
+  hoverlabel: {
+    bgcolor: "#1c1f29",
+    bordercolor: "#464554",
+    font: { color: "#e0e2ef", family: "JetBrains Mono, monospace", size: 11 },
+  },
 };
 
 export function PlotlyChart({
@@ -28,14 +36,27 @@ export function PlotlyChart({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
-    Plotly.react(
-      ref.current,
-      data,
-      { ...DARK_LAYOUT, ...layout, height },
-      { displayModeBar: false, responsive: true },
-    );
+    if (!ref.current || !Plotly) return;
+    try {
+      Plotly.react(
+        ref.current,
+        data,
+        { ...DARK_LAYOUT, ...layout, height },
+        { displayModeBar: false, responsive: true },
+      );
+    } catch (e) {
+      console.error("Plotly rendering error:", e);
+    }
   }, [data, layout, height]);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(() => {
+      if (ref.current) (Plotly as any).relayout(ref.current, { autosize: true });
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -44,5 +65,5 @@ export function PlotlyChart({
     };
   }, []);
 
-  return <div ref={ref} style={{ width: "100%", height }} />;
+  return <div ref={ref} style={{ width: "100%", height, overflow: "visible" }} />;
 }

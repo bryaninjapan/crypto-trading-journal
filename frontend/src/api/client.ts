@@ -5,6 +5,7 @@ import type {
   PositionDetail,
   SymbolRow,
   KlinesResponse,
+  MaeMfeTimeline,
 } from "./types";
 
 // 同源请求；HTTP Basic 由浏览器在首个 401 后自动附带（grill 决策 #8）。
@@ -44,6 +45,7 @@ export const api = {
   position: (id: number) => get<PositionDetail>(`/api/positions/${id}`),
   klines: (id: number, interval?: string) =>
     get<KlinesResponse>(`/api/positions/${id}/klines${qs({ interval })}`),
+  maeMfeTimeline: (id: number) => get<MaeMfeTimeline>(`/api/positions/${id}/mae-mfe-timeline`),
   reports: (market = "usdm") => get<any>(`/api/reports${qs({ market })}`),
   symbols: (market?: string) => get<{ symbols: SymbolRow[] }>(`/api/symbols${qs({ market })}`),
 };

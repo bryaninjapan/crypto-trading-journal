@@ -1,4 +1,4 @@
-export type Market = "spot" | "usdm" | "coinm";
+export type Market = "usdm" | "coinm";
 export type Direction = "Long" | "Short";
 
 export interface Position {
@@ -14,12 +14,14 @@ export interface Position {
   avg_entry: number | null;
   avg_exit: number | null;
   realized_pnl: number | null;
+  realized_pnl_usd?: number | null;
   pnl_asset: string | null;
   is_estimated: boolean;
   fees: number | null;
   fee_asset: string | null;
   funding: number | null;
   num_fills: number;
+  close_price_usd: number | null;
   mae: number | null;
   mfe: number | null;
   entry_quality: number | null;
@@ -48,6 +50,7 @@ export interface Balance {
   free: number | null;
   locked: number | null;
   balance: number | null;
+  usd_value?: number | null;
 }
 
 export interface Summary {
@@ -55,7 +58,7 @@ export interface Summary {
   kpi: {
     total_positions: number;
     win_rate: number;
-    usdm_realized_pnl: number;
+    futures_realized_pnl: number;
     pnl_asset: string;
   };
   equity_curve: { t: number; cum: number }[];
@@ -64,19 +67,49 @@ export interface Summary {
 
 export interface Analytics {
   market: Market;
-  equity_curve: { t: number; cum: number; drawdown: number }[];
-  expectancy_donut: { wins: number; losses: number; win_rate: number };
-  long_short: { longs: number; shorts: number; long_pct: number };
+  kpi: {
+    total_trades: number;
+    avg_hold_ms: number;
+    win_rate: number;
+    longs: number;
+    shorts: number;
+    long_pct: number;
+  };
   statistics: {
     total_gain_loss: number;
     trade_expectancy: number;
     avg_daily_gain: number;
-    avg_hold_ms: number;
+    avg_daily_volume: number;
+    largest_gain: number;
+    total_trades_volume: number;
+    avg_trades_per_day: number;
+    avg_trade_win: number;
+    avg_trade_loss: number;
+    max_consecutive_win: number;
+    max_consecutive_loss: number;
+    largest_losses: number;
+  };
+  longs: {
+    count: number;
+    win_ratio: number;
+    wins: number;
+    losses: number;
+    avg_duration_ms: number;
+    total_realized_pnl: number;
     avg_win: number;
     avg_loss: number;
   };
-  pnl_asset: string;
-  note: string;
+  shorts: {
+    count: number;
+    win_ratio: number;
+    wins: number;
+    losses: number;
+    avg_duration_ms: number;
+    total_realized_pnl: number;
+    avg_win: number;
+    avg_loss: number;
+  };
+  equity_curve?: { t: number; cum: number; drawdown: number }[];
 }
 
 export interface SymbolRow {
@@ -111,4 +144,14 @@ export interface KlinesResponse {
     entry: { t: number; price: number | null };
     exit: { t: number | null; price: number | null } | null;
   };
+}
+
+export interface MaeMfePoint {
+  t: number;
+  mae: number;
+  mfe: number;
+}
+
+export interface MaeMfeTimeline {
+  timeline: MaeMfePoint[];
 }

@@ -2,25 +2,24 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
+import { FillsTable } from "../components/FillsTable";
 import { DirectionBadge, MarketBadge } from "../components/Badge";
 import { Gauge } from "../components/Gauge";
-import { CandleChart } from "../components/charts/CandleChart";
 import { Loading, ErrorBlock } from "../components/StateBlock";
-import { fmtPnl, fmtNum, fmtPct, fmtDuration, fmtTime, pnlClass } from "../lib/format";
+import { fmtPnlWithUsd, fmtNum, fmtDuration, fmtTime, pnlClass } from "../lib/format";
 
 export function PositionDetail() {
   const { id } = useParams();
   const pid = Number(id);
   const nav = useNavigate();
   const { data: p, error, loading } = useApi(() => api.position(pid), [pid]);
-  const klines = useApi(() => api.klines(pid), [pid]);
 
   if (loading) return <Loading />;
   if (error) return <ErrorBlock error={error} />;
   if (!p) return null;
 
   return (
-    <div className="space-y-md">
+    <div className="space-y-lg">
       <button
         onClick={() => nav(-1)}
         className="flex items-center gap-1 text-on-surface-variant hover:text-primary"
@@ -29,7 +28,8 @@ export function PositionDetail() {
         <span className="text-data-mono">Back</span>
       </button>
 
-      {/* 概要卡 */}
+
+      {/* Summary Card */}
       <GlassCard className="flex flex-col gap-md md:flex-row md:justify-between">
         <div className="w-full space-y-2 md:w-1/2">
           <div className="flex items-center gap-2">
@@ -40,7 +40,7 @@ export function PositionDetail() {
           <Row label="Open" value={`${fmtNum(p.avg_entry, 4)} @ ${fmtTime(p.open_time)}`} />
           <Row
             label="Close"
-            value={p.close_time ? `${fmtNum(p.avg_exit, 4)} @ ${fmtTime(p.close_time)}` : "仍持仓"}
+            value={p.close_time ? `${fmtNum(p.avg_exit, 4)} @ ${fmtTime(p.close_time)}` : "Open"}
           />
           <Row label="Qty" value={fmtNum(p.qty, 6)} />
           <Row label="Fills" value={String(p.num_fills)} />
@@ -49,57 +49,49 @@ export function PositionDetail() {
           <Row label="Hold Time" value={fmtDuration(p.hold_ms)} />
           <Row label="Fees" value={p.fees ? `${fmtNum(p.fees, 6)} ${p.fee_asset ?? ""}` : "—"} />
           <Row label="Total Funding" value={p.funding === null ? "N/A" : fmtNum(p.funding, 6)} />
+          {p.close_price_usd && (
+            <Row label="Close Price USD" value={`$${fmtNum(p.close_price_usd, 2)}`} />
+          )}
           <div className="flex items-center justify-between">
             <span className="font-sans text-headline-md font-bold">Realised PNL</span>
-            <span className={`font-mono text-headline-md ${pnlClass(p.realized_pnl)}`}>
-              {fmtPnl(p.realized_pnl, p.pnl_asset || "USDT")}
+            <span
+              className={`font-mono text-headline-md ${pnlClass(p.realized_pnl)}`}
+              title={
+                p.pnl_asset && p.pnl_asset !== "USDT" && p.realized_pnl_usd != null
+                  ? "USD 以现价估算，非成交当时价"
+                  : undefined
+              }
+            >
+              {fmtPnlWithUsd(p.realized_pnl, p.pnl_asset || "USDT", p.realized_pnl_usd)}
             </span>
           </div>
         </div>
       </GlassCard>
 
-      {/* 蜡烛图 */}
-      <GlassCard className="!p-sm md:!p-md">
-        {klines.loading ? (
-          <Loading />
-        ) : klines.error ? (
-          <ErrorBlock error={klines.error} />
-        ) : klines.data ? (
-          <>
-            <div className="mb-2 flex justify-between px-2 text-data-mono text-on-surface-variant">
-              <span>{klines.data.symbol}</span>
-              <span>{klines.data.interval}</span>
-            </div>
-            <CandleChart data={klines.data} />
-          </>
-        ) : null}
+      {/* Fills Table (Full Width) */}
+      <GlassCard className="!p-0 overflow-hidden">
+        <div className="px-lg py-md">
+          <span className="text-label-caps uppercase text-on-surface-variant">Trade Fills</span>
+        </div>
+        <div className="border-t border-white/[0.06] px-lg py-md">
+          <FillsTable fills={p.fills || []} pnl_asset={p.pnl_asset ?? undefined} />
+        </div>
       </GlassCard>
 
-      {/* MAE / MFE */}
-      {(p.mae !== null || p.mfe !== null) && (
-        <GlassCard className="space-y-2">
-          <div className="flex justify-between text-data-mono text-on-surface-variant">
-            <span>MAE / MFE（相对入场均价）</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-data-mono text-bearish">{fmtPct(p.mae)}</span>
-            <div className="flex h-2 flex-grow overflow-hidden rounded-full bg-surface-container-highest">
-              <div className="h-full bg-bearish/50" style={{ width: `${barPct(p.mae, p.mfe, true)}%` }} />
-              <div className="h-full bg-bullish/50" style={{ width: `${barPct(p.mae, p.mfe, false)}%` }} />
-            </div>
-            <span className="font-mono text-data-mono text-bullish">{fmtPct(p.mfe)}</span>
-          </div>
-        </GlassCard>
-      )}
-
-      {/* 仪表盘 */}
-      <div className="grid grid-cols-1 gap-md md:grid-cols-2">
+      {/* MAE/MFE Timeline */}
+      {/* Metrics: 2-Column Grid */}
+      <div className="grid grid-cols-1 gap-lg md:grid-cols-2">
+        {/* Entry Quality Gauge */}
         <Gauge label="Entry Quality" value={p.entry_quality} />
+
+        {/* Opportunity Capture Gauge */}
         <Gauge label="Opportunity Capture" value={p.opportunity_capture} />
       </div>
 
       {p.metrics_error && (
-        <div className="text-data-mono text-bearish">指标计算失败：{p.metrics_error}</div>
+        <div className="text-data-mono text-bearish text-xs px-lg">
+          指标计算失败：{p.metrics_error}
+        </div>
       )}
     </div>
   );
@@ -114,10 +106,3 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function barPct(mae: number | null, mfe: number | null, adverse: boolean): number {
-  const a = Math.abs(mae ?? 0);
-  const f = Math.abs(mfe ?? 0);
-  const total = a + f;
-  if (total === 0) return 50;
-  return ((adverse ? a : f) / total) * 100;
-}

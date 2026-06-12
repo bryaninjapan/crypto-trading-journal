@@ -2,143 +2,288 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { useApi } from "../lib/useApi";
 import { GlassCard } from "../components/GlassCard";
-import { KpiCard } from "../components/KpiCard";
 import { PlotlyChart } from "../components/charts/PlotlyChart";
 import { Loading, ErrorBlock } from "../components/StateBlock";
 import { fmtPnl, fmtNum, fmtDuration, pnlClass } from "../lib/format";
 
+type Market = "usdm" | "coinm";
+
 export function Analytics() {
-  const [mode, setMode] = useState<"pnl" | "drawdown">("pnl");
-  const { data, error, loading } = useApi(() => api.analytics("usdm"), []);
+  const [market, setMarket] = useState<Market>("usdm");
+  const { data, error, loading } = useApi(() => api.analytics(market), [market]);
+
   if (loading) return <Loading />;
   if (error) return <ErrorBlock error={error} />;
   if (!data) return null;
 
-  const c = data.equity_curve;
-  const x = c.map((p) => new Date(p.t));
+  const kpi = data.kpi;
   const stats = data.statistics;
-  const donut = data.expectancy_donut;
+  const longs = data.longs;
+  const shorts = data.shorts;
 
   return (
     <div className="space-y-lg">
-      <div>
+      {/* Header + Market Filter */}
+      <div className="flex items-center justify-between">
         <h1 className="font-sans text-headline-md font-bold">Analytics</h1>
-        <p className="text-data-mono text-on-surface-variant">{data.note}</p>
+        <div className="flex gap-1 rounded-full border border-white/[0.08] bg-surface/50 p-1">
+          {["usdm", "coinm"].map((m) => (
+            <button
+              key={m}
+              onClick={() => setMarket(m as Market)}
+              className={`rounded-full px-3 py-1 text-data-mono text-xs transition-colors ${
+                market === m ? "bg-primary/20 text-primary" : "text-on-surface-variant"
+              }`}
+            >
+              {m === "usdm" ? "USD-M" : "COIN-M"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* 权益 / 回撤 切换 */}
+      {/* KPI Row: 4 Cards */}
+      <div className="grid grid-cols-1 gap-md md:grid-cols-4">
+        {/* Total Trades */}
+        <GlassCard>
+          <div className="text-label-caps uppercase text-on-surface-variant">Total Trades</div>
+          <div className="mt-3 text-headline-lg font-bold">{kpi.total_trades}</div>
+        </GlassCard>
+
+        {/* Avg Hold */}
+        <GlassCard>
+          <div className="text-label-caps uppercase text-on-surface-variant">Avg Hold</div>
+          <div className="mt-3 text-headline-lg font-bold">{fmtDuration(kpi.avg_hold_ms)}</div>
+        </GlassCard>
+
+        {/* Win Rate Donut */}
+        <GlassCard noOverflow>
+          <div className="text-label-caps uppercase text-on-surface-variant">Win Rate</div>
+          <PlotlyChart
+            height={180}
+            data={[
+              {
+                values: [kpi.win_rate, 100 - kpi.win_rate],
+                labels: ["Wins", "Losses"],
+                type: "pie",
+                hole: 0.62,
+                marker: { colors: ["#10B981", "#EF4444"] },
+                textinfo: "none",
+                sort: false,
+              } as any,
+            ]}
+            layout={{
+              showlegend: false,
+              annotations: [
+                {
+                  text: `${fmtNum(kpi.win_rate)}%`,
+                  font: { size: 20, color: "#e0e2ef" },
+                  showarrow: false,
+                },
+              ],
+            }}
+          />
+        </GlassCard>
+
+        {/* Long/Short Ratio */}
+        <GlassCard>
+          <div className="text-label-caps uppercase text-on-surface-variant">Long / Short</div>
+          <div className="mt-3 flex h-3 overflow-hidden rounded-full">
+            <div className="h-full bg-bullish" style={{ width: `${kpi.long_pct}%` }} />
+            <div className="h-full bg-bearish" style={{ width: `${100 - kpi.long_pct}%` }} />
+          </div>
+          <div className="mt-2 flex justify-between font-mono text-data-mono text-xs">
+            <span className="text-bullish">{kpi.longs}</span>
+            <span className="text-bearish">{kpi.shorts}</span>
+          </div>
+        </GlassCard>
+      </div>
+
+      {/* Statistics Section: 2-Column Table */}
       <GlassCard>
-        <div className="mb-2 flex items-center justify-between">
-          <span className="font-mono text-headline-md font-bold">
-            {mode === "pnl" ? "PNL" : "Max Drawdown"}
-          </span>
-          <div className="flex gap-1 rounded-full border border-white/[0.08] p-1">
-            {(["pnl", "drawdown"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`rounded-full px-3 py-1 text-data-mono transition-colors ${
-                  mode === m ? "bg-primary/20 text-primary" : "text-on-surface-variant"
-                }`}
-              >
-                {m === "pnl" ? "PNL" : "Drawdown"}
-              </button>
-            ))}
+        <span className="text-label-caps uppercase text-on-surface-variant">Statistics</span>
+        <div className="mt-4 grid grid-cols-2 gap-md">
+          {/* Left Column */}
+          <div className="space-y-0 border-r border-white/[0.06]">
+            <StatRow label="Total Gain/Loss" value={fmtPnl(stats.total_gain_loss)} cls={pnlClass(stats.total_gain_loss)} />
+            <StatRow label="Trade Expectancy" value={fmtPnl(stats.trade_expectancy)} cls={pnlClass(stats.trade_expectancy)} />
+            <StatRow label="Avg Daily Gain" value={fmtPnl(stats.avg_daily_gain)} cls={pnlClass(stats.avg_daily_gain)} />
+            <StatRow label="Avg Daily Volume" value={fmtPnl(stats.avg_daily_volume)} cls="text-on-surface" />
+            <StatRow label="Largest Gain" value={fmtPnl(stats.largest_gain)} cls="text-bullish" />
+            <StatRow label="Total Trades Volume" value={fmtPnl(stats.total_trades_volume)} cls="text-on-surface" />
+          </div>
+
+          {/* Right Column */}
+          <div className="space-y-0">
+            <StatRow label="Avg Trades/Day" value={fmtNum(stats.avg_trades_per_day)} cls="text-on-surface" />
+            <StatRow label="Avg Trade Win" value={fmtPnl(stats.avg_trade_win)} cls="text-bullish" />
+            <StatRow label="Avg Trade Loss" value={fmtPnl(stats.avg_trade_loss)} cls="text-bearish" />
+            <StatRow label="Max Consecutive Win" value={`${stats.max_consecutive_win}`} cls="text-on-surface" />
+            <StatRow label="Max Consecutive Loss" value={`${stats.max_consecutive_loss}`} cls="text-on-surface" />
+            <StatRow label="Largest Losses" value={fmtPnl(stats.largest_losses)} cls="text-bearish" />
           </div>
         </div>
-        <PlotlyChart
-          height={300}
-          data={[
-            mode === "pnl"
-              ? {
-                  x,
-                  y: c.map((p) => p.cum),
-                  type: "scatter",
-                  mode: "lines",
-                  fill: "tozeroy",
-                  line: { color: "#10B981", width: 2, shape: "spline" },
-                  fillcolor: "rgba(16,185,129,0.08)",
-                }
-              : {
-                  x,
-                  y: c.map((p) => p.drawdown),
-                  type: "scatter",
-                  mode: "lines",
-                  fill: "tozeroy",
-                  line: { color: "#EF4444", width: 2 },
-                  fillcolor: "rgba(239,68,68,0.08)",
-                },
-          ]}
-        />
       </GlassCard>
 
-      <div className="grid grid-cols-2 gap-md">
-        <KpiCard label="Total Trades" value={fmtNum(donut.wins + donut.losses, 0)} />
-        <KpiCard label="Avg Hold" value={fmtDuration(stats.avg_hold_ms)} />
+      {/* Longs Section: 4-Column Cards */}
+      <div>
+        <h2 className="mb-md text-label-caps uppercase text-on-surface-variant">Longs</h2>
+        <div className="grid grid-cols-1 gap-md md:grid-cols-4">
+          {/* Longs Count */}
+          <GlassCard>
+            <div className="text-label-caps uppercase text-on-surface-variant">Longs</div>
+            <div className="mt-3 text-center">
+              <div className="text-headline-xl font-bold text-bullish">{longs.count}</div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-container">
+                <div className="h-full bg-bullish" style={{ width: `${(longs.count / kpi.total_trades) * 100}%` }} />
+              </div>
+              <div className="mt-2 text-data-mono text-xs text-on-surface-variant">
+                {fmtNum((longs.count / kpi.total_trades) * 100)}% of total
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Long Trade Win Ratio */}
+          <GlassCard noOverflow>
+            <div className="text-label-caps uppercase text-on-surface-variant">Long Trade Win Ratio</div>
+            <PlotlyChart
+              height={160}
+              data={[
+                {
+                  values: [longs.wins, longs.losses],
+                  labels: ["Wins", "Losses"],
+                  type: "pie",
+                  hole: 0.62,
+                  marker: { colors: ["#10B981", "#EF4444"] },
+                  textinfo: "none",
+                  sort: false,
+                } as any,
+              ]}
+              layout={{
+                showlegend: false,
+                annotations: [
+                  {
+                    text: `${fmtNum(longs.win_ratio)}%`,
+                    font: { size: 18, color: "#e0e2ef" },
+                    showarrow: false,
+                  },
+                ],
+              }}
+            />
+            <div className="mt-2 text-center text-data-mono text-xs text-on-surface-variant">
+              {longs.wins}W / {longs.losses}L
+            </div>
+          </GlassCard>
+
+          {/* Avg Long Trade Duration */}
+          <GlassCard>
+            <div className="text-label-caps uppercase text-on-surface-variant">Avg Long Duration</div>
+            <div className="mt-3 text-center">
+              <div className="text-body-bold font-semibold text-on-surface">{fmtDuration(longs.avg_duration_ms)}</div>
+              <div className="mt-3 text-data-mono text-xs text-on-surface-variant">
+                Avg Win: {fmtPnl(longs.avg_win, "USDT")}
+              </div>
+              <div className="text-data-mono text-xs text-on-surface-variant">
+                Avg Loss: {fmtPnl(longs.avg_loss, "USDT")}
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Total Long Realized PNL */}
+          <GlassCard>
+            <div className="text-label-caps uppercase text-on-surface-variant">Total Long Realised PNL</div>
+            <div className={`mt-3 text-center text-headline-lg font-bold ${pnlClass(longs.total_realized_pnl)}`}>
+              {fmtPnl(longs.total_realized_pnl, "USDT")}
+            </div>
+            <div className="mt-3 text-center text-data-mono text-xs text-on-surface-variant">
+              Avg W: {fmtPnl(longs.avg_win, "USDT")} | Loss: {fmtPnl(longs.avg_loss, "USDT")}
+            </div>
+          </GlassCard>
+        </div>
       </div>
 
-      {/* 期望值环（胜负） */}
-      <GlassCard>
-        <span className="text-label-caps uppercase text-on-surface-variant">Expectancy</span>
-        <PlotlyChart
-          height={260}
-          data={[
-            {
-              values: [donut.wins, donut.losses],
-              labels: ["Wins", "Losses"],
-              type: "pie",
-              hole: 0.62,
-              marker: { colors: ["#10B981", "#EF4444"] },
-              textinfo: "none",
-              sort: false,
-            } as any,
-          ]}
-          layout={{
-            showlegend: true,
-            annotations: [
-              {
-                text: `${fmtNum(donut.win_rate)}%`,
-                font: { size: 26, color: "#e0e2ef" },
-                showarrow: false,
-              },
-            ],
-          }}
-        />
-        <div className="flex justify-around font-mono text-data-mono">
-          <span className="text-bullish">{donut.wins}W</span>
-          <span className="text-bearish">{donut.losses}L</span>
-        </div>
-      </GlassCard>
+      {/* Shorts Section: 4-Column Cards */}
+      <div>
+        <h2 className="mb-md text-label-caps uppercase text-on-surface-variant">Shorts</h2>
+        <div className="grid grid-cols-1 gap-md md:grid-cols-4">
+          {/* Shorts Count */}
+          <GlassCard>
+            <div className="text-label-caps uppercase text-on-surface-variant">Shorts</div>
+            <div className="mt-3 text-center">
+              <div className="text-headline-xl font-bold text-bearish">{shorts.count}</div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-container">
+                <div className="h-full bg-bearish" style={{ width: `${(shorts.count / kpi.total_trades) * 100}%` }} />
+              </div>
+              <div className="mt-2 text-data-mono text-xs text-on-surface-variant">
+                {fmtNum((shorts.count / kpi.total_trades) * 100)}% of total
+              </div>
+            </div>
+          </GlassCard>
 
-      {/* 多空比 */}
-      <GlassCard>
-        <span className="text-label-caps uppercase text-on-surface-variant">Long / Short Ratio</span>
-        <div className="mt-3 flex h-3 overflow-hidden rounded-full">
-          <div className="h-full bg-bullish" style={{ width: `${data.long_short.long_pct}%` }} />
-          <div className="h-full bg-bearish" style={{ width: `${100 - data.long_short.long_pct}%` }} />
-        </div>
-        <div className="mt-2 flex justify-between font-mono text-data-mono">
-          <span className="text-bullish">Long {data.long_short.longs}</span>
-          <span className="text-bearish">Short {data.long_short.shorts}</span>
-        </div>
-      </GlassCard>
+          {/* Short Trade Win Ratio */}
+          <GlassCard noOverflow>
+            <div className="text-label-caps uppercase text-on-surface-variant">Short Trade Win Ratio</div>
+            <PlotlyChart
+              height={160}
+              data={[
+                {
+                  values: [shorts.wins, shorts.losses],
+                  labels: ["Wins", "Losses"],
+                  type: "pie",
+                  hole: 0.62,
+                  marker: { colors: ["#10B981", "#EF4444"] },
+                  textinfo: "none",
+                  sort: false,
+                } as any,
+              ]}
+              layout={{
+                showlegend: false,
+                annotations: [
+                  {
+                    text: `${fmtNum(shorts.win_ratio)}%`,
+                    font: { size: 18, color: "#e0e2ef" },
+                    showarrow: false,
+                  },
+                ],
+              }}
+            />
+            <div className="mt-2 text-center text-data-mono text-xs text-on-surface-variant">
+              {shorts.wins}W / {shorts.losses}L
+            </div>
+          </GlassCard>
 
-      {/* 统计 */}
-      <GlassCard className="space-y-2">
-        <span className="text-label-caps uppercase text-on-surface-variant">Statistics</span>
-        <Stat label="Total Gain/Loss" value={fmtPnl(stats.total_gain_loss)} cls={pnlClass(stats.total_gain_loss)} />
-        <Stat label="Trade Expectancy" value={fmtPnl(stats.trade_expectancy)} cls={pnlClass(stats.trade_expectancy)} />
-        <Stat label="Avg Daily Gain" value={fmtPnl(stats.avg_daily_gain)} cls={pnlClass(stats.avg_daily_gain)} />
-        <Stat label="Avg Win" value={fmtPnl(stats.avg_win)} cls="text-bullish" />
-        <Stat label="Avg Loss" value={fmtPnl(stats.avg_loss)} cls="text-bearish" />
-      </GlassCard>
+          {/* Avg Short Trade Duration */}
+          <GlassCard>
+            <div className="text-label-caps uppercase text-on-surface-variant">Avg Short Duration</div>
+            <div className="mt-3 text-center">
+              <div className="text-body-bold font-semibold text-on-surface">{fmtDuration(shorts.avg_duration_ms)}</div>
+              <div className="mt-3 text-data-mono text-xs text-on-surface-variant">
+                Avg Win: {fmtPnl(shorts.avg_win, "USDT")}
+              </div>
+              <div className="text-data-mono text-xs text-on-surface-variant">
+                Avg Loss: {fmtPnl(shorts.avg_loss, "USDT")}
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Total Short Realized PNL */}
+          <GlassCard>
+            <div className="text-label-caps uppercase text-on-surface-variant">Total Short Realised PNL</div>
+            <div className={`mt-3 text-center text-headline-lg font-bold ${pnlClass(shorts.total_realized_pnl)}`}>
+              {fmtPnl(shorts.total_realized_pnl, "USDT")}
+            </div>
+            <div className="mt-3 text-center text-data-mono text-xs text-on-surface-variant">
+              Avg W: {fmtPnl(shorts.avg_win, "USDT")} | Loss: {fmtPnl(shorts.avg_loss, "USDT")}
+            </div>
+          </GlassCard>
+        </div>
+      </div>
     </div>
   );
 }
 
-function Stat({ label, value, cls }: { label: string; value: string; cls?: string }) {
+function StatRow({ label, value, cls }: { label: string; value: string; cls?: string }) {
   return (
-    <div className="flex justify-between border-b border-white/[0.06] py-2 font-mono text-data-mono last:border-0">
+    <div className="flex justify-between border-b border-white/[0.06] py-2 font-mono text-data-mono text-xs last:border-0">
       <span className="text-on-surface-variant">{label}</span>
       <span className={cls}>{value}</span>
     </div>

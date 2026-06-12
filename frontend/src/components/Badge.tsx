@@ -18,7 +18,6 @@ export function MarketBadge({ market }: { market: Market }) {
   const color: Record<Market, string> = {
     usdm: "bg-primary/10 text-primary",
     coinm: "bg-tertiary/10 text-tertiary",
-    spot: "bg-secondary/10 text-secondary",
   };
   return <span className={`pill ${color[market]}`}>{MARKET_LABEL[market]}</span>;
 }
